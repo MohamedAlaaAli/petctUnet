@@ -70,8 +70,8 @@ class TransposeConvBlock3D(nn.Module):
                 out_chans (int): Number of output channels.
                 leaky_negative_slope (float): Negative slope for the LeakyReLU activation function. Default is 0.0.
         """
-        self.leaky_negative_slope = leaky_negative_slope
         super().__init__()
+        self.leaky_negative_slope = leaky_negative_slope
         self.layers = nn.Sequential(
             nn.ConvTranspose3d(in_chans, out_chans, kernel_size=2, stride=2, bias=False),
             nn.InstanceNorm3d(out_chans),
@@ -80,7 +80,7 @@ class TransposeConvBlock3D(nn.Module):
 
     def forward(self, x:torch.Tensor):
         """
-            Forward Args:
+            Args:
                 x (torch.Tensor): Input tensor of shape (N, in_chans, D, H, W).
 
             Returns:
@@ -122,7 +122,7 @@ class AttentionBlock3D(nn.Module):
 
     def forward(self, x):  
         """
-            Forward Args:
+            Args:
                 x (torch.Tensor): Input tensor of shape (N, in_chans, D, H, W).
 
             Returns:
