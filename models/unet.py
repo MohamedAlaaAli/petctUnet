@@ -1,4 +1,4 @@
-from blocks import *
+from models.blocks import *
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -47,6 +47,9 @@ class Unet(nn.Module):
                     )
             ]
         )
+
+        if use_att:
+            self.down_att_layers = nn.ModuleList([AttentionBlock3D(chans)])
 
         ch = chans
         for _ in range(num_pool_layers - 1):
