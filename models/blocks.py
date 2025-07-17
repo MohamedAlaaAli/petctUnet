@@ -8,21 +8,17 @@ class ConvBlock3D(nn.Module):
         instance normalization, LeakyReLU activation, and dropout. Optionally includes a
         residual connection using a 1x1 convolution.
 
-        Args:
-            in_chans (int): Number of input channels.
-            out_chans (int): Number of output channels.
-            drop_prob (float): Dropout probability.
-            use_res (bool): Whether to use a residual connection. Default is True.
-            leaky_negative_slope (float): Negative slope for the LeakyReLU activation. Default is 0.
-
-        Forward Args:
-            x (torch.Tensor): Input tensor of shape (N, C, D, H, W).
-
-        Returns:
-            torch.Tensor: Output tensor of shape (N, out_chans, D, H, W).
     """
 
     def __init__(self, in_chans:int, out_chans:int, drop_prob:float, use_res:bool=True, leaky_negative_slope:float=0.0):
+        """
+            Args:
+                in_chans (int): Number of input channels.
+                out_chans (int): Number of output channels.
+                drop_prob (float): Dropout probability.
+                use_res (bool): Whether to use a residual connection. Default is True.
+                leaky_negative_slope (float): Negative slope for the LeakyReLU activation. Default is 0.
+        """
         super().__init__()
         self.use_res = use_res
         self.leaky_negative_slope = leaky_negative_slope
@@ -46,6 +42,13 @@ class ConvBlock3D(nn.Module):
         )
 
     def forward(self, x:torch.Tensor):
+        """
+            Args:
+                x (torch.Tensor): Input tensor of shape (N, C, D, H, W).
+
+            Returns:
+                torch.Tensor: Output tensor of shape (N, out_chans, D, H, W).
+        """
         if self.use_res:
             return self.out_layers(self.layers(x) + self.conv1x1(x))
         else:
@@ -58,19 +61,15 @@ class TransposeConvBlock3D(nn.Module):
         3D transpose convolution (deconvolution) that doubles the spatial dimensions, Instance normalization and 
         LeakyReLU activation.
 
-        Args:
-            in_chans (int): Number of input channels.
-            out_chans (int): Number of output channels.
-            leaky_negative_slope (float): Negative slope for the LeakyReLU activation function. Default is 0.0.
-
-        Forward Args:
-            x (torch.Tensor): Input tensor of shape (N, in_chans, D, H, W).
-
-        Returns:
-            torch.Tensor: Upsampled tensor of shape (N, out_chans, 2*D, 2*H, 2*W).
     """
 
     def __init__(self, in_chans:int, out_chans:int, leaky_negative_slope:float=0.0):
+        """        
+            Args:
+                in_chans (int): Number of input channels.
+                out_chans (int): Number of output channels.
+                leaky_negative_slope (float): Negative slope for the LeakyReLU activation function. Default is 0.0.
+        """
         self.leaky_negative_slope = leaky_negative_slope
         super().__init__()
         self.layers = nn.Sequential(
@@ -80,6 +79,13 @@ class TransposeConvBlock3D(nn.Module):
         )
 
     def forward(self, x:torch.Tensor):
+        """
+            Forward Args:
+                x (torch.Tensor): Input tensor of shape (N, in_chans, D, H, W).
+
+            Returns:
+                torch.Tensor: Upsampled tensor of shape (N, out_chans, 2*D, 2*H, 2*W).
+        """
         return self.layers(x)
 
 
@@ -93,18 +99,13 @@ class AttentionBlock3D(nn.Module):
         to generate a spatial attention map. The final output is the element-wise maximum 
         between the channel-attended and spatial-attended feature maps.
 
-        Args:
-            num_chans (int): The number of input channels.
-            reduction (int): The reduction ratio used in the channel attention bottleneck. Defaults to 2.
-
-        Forward Args:
-            x (torch.Tensor): Input tensor of shape (N, in_chans, D, H, W).
-
-        Returns:
-            torch.Tensor: Output tensor of shape (N, in_chans, D, H, W), element-wise maximum between the channel-attended and spatial-attended feature maps.
-            
     """
     def __init__(self, num_chans, reduction=2):
+        """       
+            Args:
+                num_chans (int): The number of input channels.
+                reduction (int): The reduction ratio used in the channel attention bottleneck. Defaults to 2.
+        """
         super().__init__()
         self.C = num_chans
         self.r = reduction
@@ -120,6 +121,14 @@ class AttentionBlock3D(nn.Module):
         self.conv = nn.Conv3d(self.C, 1, kernel_size=1, stride=1, padding=0, bias=False)
 
     def forward(self, x):  
+        """
+            Forward Args:
+                x (torch.Tensor): Input tensor of shape (N, in_chans, D, H, W).
+
+            Returns:
+                torch.Tensor: Output tensor of shape (N, in_chans, D, H, W), element-wise maximum between the channel-attended and spatial-attended feature maps.
+
+        """
         b, c, d, h, w = x.shape
 
         # Spatial attention
