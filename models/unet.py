@@ -1,5 +1,6 @@
 from blocks import *
 import torch.nn as nn
+import torch.nn.functional as F
 
 class Unet(nn.Module):
     """
@@ -74,5 +75,47 @@ class Unet(nn.Module):
         self.out_conv = nn.Conv3d(ch * 2, self.out_chans, kernel_size=1, stride=1)
 
 
+    def forward(self, image: torch.Tensor):
+        """
+        Args:
+            image (torch.Tensor): Input tensor of shape (N, in_chans, D, H, W).
+
+        Returns:
+            torch.Tensor: Output tensor of shape (N, out_chans, D, H, W).
+        """
+        stack = []
+        output = image
+
+        # Downsampling path
+        for idx, layer in enumerate(self.down_sample_layers):
+            output = layer(output)
+            if self.use_att:
+                output = self.down_att_layers[idx](output)
+            stack.append(output)
+            output = F.avg_pool3d(output, kernel_size=2, stride=2)
+
+        output = self.conv(output)
+        if self.use_att:
+            output = self.conv_att(output)
+
+        # Upsampling path
+        for idx in range(self.num_pool_layers):
+            downsample = stack.pop()
+            output = self.up_transpose_conv[idx](output)
+
+            # Padding for odd-sized inputs
+            diff_d = downsample.shape[-3] - output.shape[-3]
+            diff_h = downsample.shape[-2] - output.shape[-2]
+            diff_w = downsample.shape[-1] - output.shape[-1]
+
+            if diff_d != 0 or diff_h != 0 or diff_w != 0:
+                output = F.pad(output, [0, diff_w, 0, diff_h, 0, diff_d], mode='reflect')
+
+            output = torch.cat([output, downsample], dim=1)
+            output = self.up_conv[idx](output)
+            if self.use_att:
+                output = self.up_att[idx](output)
+
+        return self.out_conv(output)
 
 
