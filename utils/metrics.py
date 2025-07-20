@@ -102,7 +102,7 @@ def multiclass_dice_score(preds: torch.Tensor, targets: torch.Tensor, num_classe
     preds = torch.argmax(preds, dim=1)  # shape: (B, D, H, W)
     dice_per_class = []
 
-    for cls in range(1, num_classes):
+    for cls in range(0, num_classes):
         pred_cls = (preds == cls).float()
         target_cls = (targets == cls).float()
 

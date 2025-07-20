@@ -1,5 +1,6 @@
 from models.unet import Unet
 from utils.metrics import *
+from models.losses import DiceLoss
 import torch
 
 
@@ -68,6 +69,29 @@ def test_segmentation_metrics():
     print("Segmentation metrics test suite passed successfully.")
 
 
+def test_dice_loss():
+    loss_fn = DiceLoss()
+
+    # Case 1: Perfect match
+    pred = torch.tensor([[[[1., 1.], [1., 1.]]]])  # Shape: (1, 1, 2, 2)
+    target = torch.tensor([[[[1., 1.], [1., 1.]]]])
+    loss = loss_fn(pred, target)
+    print(f"Perfect match loss: {loss.item():.4f}")
+    assert abs(loss.item() - 0.0) < 1e-4, "Dice loss should be near 0 for perfect match"
+
+    # Case 2: No overlap
+    pred = torch.tensor([[[[0., 0.], [0., 0.]]]])
+    target = torch.tensor([[[[1., 1.], [1., 1.]]]])
+    loss = loss_fn(pred, target)
+    print(f"No overlap loss: {loss.item():.4f}")
+    assert loss.item() > 0.9, "Dice loss should be near 1 for no overlap"
+
+    # Case 3: Half overlap
+    pred = torch.tensor([[[[1., 0.], [0., 0.]]]])
+    target = torch.tensor([[[[1., 1.], [0., 0.]]]])
+    loss = loss_fn(pred, target)
+    print(f"Half overlap loss: {loss.item():.4f}")
+    assert 0.3 < loss.item() < 0.8, "Dice loss should reflect partial overlap"
 
 
 
@@ -76,4 +100,6 @@ if __name__ == "__main__":
     model = Unet(2, 2, 32, 4, 0.2, True, True, leaky_negative_slope=0.1)
     test_out_shape(model)
     test_segmentation_metrics()
+    test_dice_loss()
+
 
