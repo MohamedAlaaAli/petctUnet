@@ -89,7 +89,6 @@ class TransposeConvBlock3D(nn.Module):
         return self.layers(x)
 
 
-
 class AttentionBlock3D(nn.Module):
     """
         A 3D attention module that applies both channel and spatial attention mechanisms.
@@ -141,4 +140,46 @@ class AttentionBlock3D(nn.Module):
         x_ca = ca * x
 
         return torch.max(x_sa, x_ca)
+
+
+class CrossAttentionModule(nn.Module):
+    def __init__(self, in_dim_q, embed_dim, in_dim_kv=768,  n_heads=8):
+        super().__init__()
+        self.q_proj = nn.Linear(in_dim_q, embed_dim)
+        self.k_proj = nn.Linear(in_dim_kv, embed_dim)
+        self.v_proj = nn.Linear(in_dim_kv, embed_dim)
+
+        self.att = nn.MultiheadAttention(embed_dim, n_heads, batch_first=True)
+
+        # Optional: fuse with original image features
+        self.fuse = nn.Tanh()
+
+    def forward(self, text_emb, img_feats):
+        """
+        Args:
+            text_emb: [B, L_text, in_dim_q] (RadBERT output after linear layer)
+            img_feats: [B, C_img, D, H, W] (feature map from UNet)
+        Returns:
+            Attended features: [B, C_img, D, H, W]
+        """
+
+        B, C_img, D, H, W = img_feats.shape
+        N = D * H * W
+
+        img_feats_flat = img_feats.flatten(2).transpose(1, 2)
+        # Linear projections
+        Q = self.q_proj(img_feats_flat)          # [B, N, embed_dim]
+        K = self.k_proj(text_emb)                # [B, L_text, embed_dim]
+        V = self.v_proj(text_emb)                # [B, L_text, embed_dim]
+        # QKT = B, N, Ltxt --> rsltV --> B, N, embed_dim 
+        # Cross-attention: attend text over image
+        attn_output, _ = self.att(Q, K, V)        # [B, N, embed_dim]
+
+        # Fuse text-image output
+        attn_output = self.fuse(attn_output)      # [B, N, embed_dim]
+        print(attn_output.shape)
+
+        attn_output = attn_output.permute(0, 2, 1).view(B, C_img, D, H, W)
+        fused_out = img_feats * attn_output  
+        return fused_out
 
