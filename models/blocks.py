@@ -150,9 +150,8 @@ class CrossAttentionModule(nn.Module):
         self.v_proj = nn.Linear(in_dim_kv, embed_dim)
 
         self.att = nn.MultiheadAttention(embed_dim, n_heads, batch_first=True)
-
-        # Optional: fuse with original image features
-        self.fuse = nn.Tanh()
+        self.dropout = nn.Dropout(p=0.5)
+        self.thresh = nn.Tanh()
 
     def forward(self, text_emb, img_feats):
         """
@@ -176,7 +175,8 @@ class CrossAttentionModule(nn.Module):
         attn_output, _ = self.att(Q, K, V)        # [B, N, embed_dim]
 
         # Fuse text-image output
-        attn_output = self.fuse(attn_output)      # [B, N, embed_dim]
+        attn_output = self.dropout(attn_output)
+        attn_output = self.thresh(attn_output)      # [B, N, embed_dim]
         print(attn_output.shape)
 
         attn_output = attn_output.permute(0, 2, 1).view(B, C_img, D, H, W)

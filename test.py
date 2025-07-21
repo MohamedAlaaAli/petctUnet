@@ -19,9 +19,6 @@ def test_out_wth_txt(model:Unet):
     except Exception as e:
         raise e
     
-
-
-
 @torch.no_grad
 def test_out_shape(model: Unet):
     """
@@ -117,8 +114,8 @@ def test_dice_loss():
 if __name__ == "__main__":
     model = Unet(2, 2, 32, 4, 0.2, True, leaky_negative_slope=0.1)
     test_out_wth_txt(model)
-    #test_out_shape(model)
-    #test_segmentation_metrics()
-    #test_dice_loss()
+    test_out_shape(model)
+    test_segmentation_metrics()
+    test_dice_loss()
 
 
