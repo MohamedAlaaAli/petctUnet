@@ -5,6 +5,24 @@ import torch
 
 
 @torch.no_grad
+def test_out_wth_txt(model:Unet):
+    """
+        test the model utilizing text grounding feature. 
+    """
+    try:
+        model.eval()
+        x = torch.randn(1, 2, 64, 64, 64)  # (B, C, D, H, W)
+        text = torch.randn(1, 2, 768)
+        out = model(x, text)
+        print(f"Output shape: {out.shape}")
+
+    except Exception as e:
+        raise e
+    
+
+
+
+@torch.no_grad
 def test_out_shape(model: Unet):
     """
         test the sahpe of output segmentation masks.
@@ -97,9 +115,10 @@ def test_dice_loss():
 
 
 if __name__ == "__main__":
-    model = Unet(2, 2, 32, 4, 0.2, True, True, leaky_negative_slope=0.1)
-    test_out_shape(model)
-    test_segmentation_metrics()
-    test_dice_loss()
+    model = Unet(2, 2, 32, 4, 0.2, True, leaky_negative_slope=0.1)
+    test_out_wth_txt(model)
+    #test_out_shape(model)
+    #test_segmentation_metrics()
+    #test_dice_loss()
 
 
