@@ -114,19 +114,33 @@ def test_embedder():
     try:
         embedder = TextEmbedder()
         res = embedder("Define what a tumor is ")
-        print(res[0].shape, res[1].shape)
+        print(res.shape)
 
     except Exception as e:
         raise e
-    
+
+
+@torch.no_grad
+def test_img_text_fusion(model):
+    model.eval()
+    embedder = TextEmbedder()
+    res = embedder("Define what a tumor is ")
+    x = torch.randn(1, 2, 64, 64, 64)  # (B, C, D, H, W)
+    out = model(x, res)
+    print(f"Output shape: {out.shape}")
+
+
+     
 
 
 if __name__ == "__main__":
     model = Unet(2, 2, 32, 4, 0.2, True, True, leaky_negative_slope=0.1)
-    test_out_wth_txt(model)
-    test_out_shape(model)
-    test_segmentation_metrics()
-    test_dice_loss()
-    test_embedder()
+    #test_out_wth_txt(model)
+    # test_out_shape(model)
+    #test_segmentation_metrics()
+    # test_dice_loss()
+    # test_embedder()
+    test_img_text_fusion(model)
+    
 
 

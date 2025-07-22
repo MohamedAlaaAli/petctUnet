@@ -177,7 +177,6 @@ class CrossAttentionModule(nn.Module):
         # Fuse text-image output
         attn_output = self.dropout(attn_output)
         attn_output = self.thresh(attn_output)      # [B, N, embed_dim]
-        print(attn_output.shape)
 
         attn_output = attn_output.permute(0, 2, 1).view(B, C_img, D, H, W)
         fused_out = img_feats * attn_output  

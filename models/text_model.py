@@ -27,5 +27,5 @@ class TextEmbedder(nn.Module):
                 Text Embedding as tensors.
         """
         encoded_input = self.tokenizer(text, return_tensors='pt')
-        _, emb = self.model(**encoded_input)
-        return emb
+        res = self.model(**encoded_input)
+        return res["last_hidden_state"]
