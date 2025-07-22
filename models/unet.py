@@ -12,7 +12,8 @@ class Unet(nn.Module):
                 chans:int = 32,
                 num_pool_layers:int = 4,
                 drop_prob:float = 0.2,
-                use_att:bool = False, 
+                use_att:bool = False,
+                use_res = False,
                 leaky_negative_slope:float = 0.0):
         """
             Args:
@@ -31,7 +32,7 @@ class Unet(nn.Module):
         self.chans = chans
         self.num_pool_layers = num_pool_layers
         self.drop_prob = drop_prob
-        self.use_res = False
+        self.use_res = use_res
         self.use_att = use_att
         self.leaky_negative_slope = leaky_negative_slope
 

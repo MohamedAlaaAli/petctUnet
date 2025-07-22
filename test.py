@@ -2,6 +2,7 @@ from models.unet import Unet
 from utils.metrics import *
 from models.losses import DiceLoss
 import torch
+from models.text_model import TextEmbedder
 
 
 @torch.no_grad
@@ -108,14 +109,24 @@ def test_dice_loss():
     print(f"Half overlap loss: {loss.item():.4f}")
     assert 0.3 < loss.item() < 0.8, "Dice loss should reflect partial overlap"
 
+@torch.no_grad
+def test_embedder():
+    try:
+        embedder = TextEmbedder()
+        res = embedder("Define what a tumor is ")
+        print(res[0].shape, res[1].shape)
 
+    except Exception as e:
+        raise e
+    
 
 
 if __name__ == "__main__":
-    model = Unet(2, 2, 32, 4, 0.2, True, leaky_negative_slope=0.1)
+    model = Unet(2, 2, 32, 4, 0.2, True, True, leaky_negative_slope=0.1)
     test_out_wth_txt(model)
     test_out_shape(model)
     test_segmentation_metrics()
     test_dice_loss()
+    test_embedder()
 
 
