@@ -124,8 +124,8 @@ def test_embedder():
 def test_img_text_fusion(model):
     model.eval()
     embedder = TextEmbedder()
-    res = embedder("Define what a tumor is ")
-    x = torch.randn(1, 2, 64, 64, 64)  # (B, C, D, H, W)
+    res = embedder(["Define what a tumor is "]*2)
+    x = torch.randn(2, 2, 64, 64, 64)  # (B, C, D, H, W)
     out = model(x, res)
     print(f"Output shape: {out.shape}")
 
