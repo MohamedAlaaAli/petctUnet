@@ -3,6 +3,7 @@ import torch
 import nibabel as nib
 from torch.utils.data import Dataset
 import numpy as np
+from models.text_model import TextEmbedder
 
 
 class PETCTDataset(Dataset):
@@ -30,12 +31,14 @@ class PETCTDataset(Dataset):
                 pet_file = next((f for f in nii_files if 'pet' in f.lower()), None)
                 ct_file = next((f for f in nii_files if 'ctres' in f.lower()), None)
                 mask_file = next((f for f in nii_files if 'seg' in f.lower()), None)
+                txt = os.path.join(study_path, "lesion_report.txt")
 
                 if pet_file and ct_file:
                     self.samples.append({
                         'pet_path': os.path.join(study_path, pet_file),
                         'ct_path': os.path.join(study_path, ct_file),
                         'mask_path': os.path.join(study_path, mask_file) if mask_file else None,
+                        "txt":txt
                     })
 
     def __len__(self):
@@ -48,8 +51,8 @@ class PETCTDataset(Dataset):
         ct_vol = nib.load(sample['ct_path']).get_fdata().astype(np.float32)
 
         # Normalize PET and CT
-        pet_vol = (pet_vol - pet_vol.min()) / (pet_vol.ptp() + 1e-6)
-        ct_vol = (ct_vol - ct_vol.min()) / (ct_vol.ptp() + 1e-6)
+        pet_vol = (pet_vol - pet_vol.min()) / (np.ptp(pet_vol) + 1e-6)
+        ct_vol = (ct_vol - ct_vol.min()) / (np.ptp(ct_vol) + 1e-6)
 
         # Optional: Clip extreme values if needed
 
@@ -64,7 +67,11 @@ class PETCTDataset(Dataset):
         ct_tensor = torch.from_numpy(ct_vol).unsqueeze(0)
         mask_tensor = torch.from_numpy(mask_vol).unsqueeze(0)
 
+        with open(sample["txt"], "r") as s:
+            text = s.read()
+
+        
         if self.transform:
             pet_tensor, ct_tensor, mask_tensor = self.transform(pet_tensor, ct_tensor, mask_tensor)
 
-        return ct_tensor, pet_tensor, mask_tensor
+        return ct_tensor, pet_tensor, mask_tensor, text
