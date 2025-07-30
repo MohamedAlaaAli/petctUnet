@@ -40,12 +40,14 @@ class PETCTDataset(Dataset):
                 )
                 ct_file = next((f for f in nii_files if 'ctres' in f.lower()), None)
                 mask_file = next((f for f in nii_files if 'seg' in f.lower()), None)
+                
 
                 if pet_file and ct_file:
                     self.samples.append({
                         'pet_path': os.path.join(study_path, pet_file),
                         'ct_path': os.path.join(study_path, ct_file),
                         'mask_path': os.path.join(study_path, mask_file) if mask_file else None,
+                        "txt": os.path.join(study_path, "lesion_report.txt")
                     })
 
     def __len__(self):
@@ -72,8 +74,10 @@ class PETCTDataset(Dataset):
         pet_tensor = torch.from_numpy(pet_vol).unsqueeze(0).permute(0, 3, 1, 2)
         ct_tensor = torch.from_numpy(ct_vol).unsqueeze(0).permute(0, 3, 1, 2)
         mask_tensor = torch.from_numpy(mask_vol).unsqueeze(0).permute(0, 3, 1, 2)
+        with open(sample['txt'], 'r') as f:
+            content = f.read()
 
         if self.transform:
             pet_tensor, ct_tensor, mask_tensor = self.transform(pet_tensor, ct_tensor, mask_tensor)
 
-        return ct_tensor, pet_tensor, mask_tensor
+        return ct_tensor, pet_tensor, mask_tensor, content

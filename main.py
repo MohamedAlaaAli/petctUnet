@@ -20,6 +20,6 @@ model.eval()
 #res = embedder(["Define what a tumor is "]*1)
 ct, pet, mask = next(iter(train_loader))
 print(ct.shape, pet.shape, mask.shape)
-# out = model(torch.cat([ct, pet], dim=1), TextEmbedder()(txt))
-# print(f"Output shape: {out.shape}")
+out = model(torch.cat([ct, pet], dim=1), None)
+print(f"Output shape: {out.shape}")
 
