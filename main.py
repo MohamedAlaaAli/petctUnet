@@ -6,15 +6,15 @@ from models.text_model import TextEmbedder
 from utils.data import PETCTDataset
 from torch.utils.data import DataLoader
 
-train_set_dir = '/home/muhamed/mntdrive/zips/FDG-PET-CT-Lesions'
-val_set_dir = '/home/muhamed/mntdrive/zips/test'
+train_set_dir = '/kaggle/input/petcttxt00aa/content/drive/MyDrive/datapet/FDG-PET-CT-Lesions'
+#val_set_dir = '/home/muhamed/mntdrive/zips/test'
 
 train_set = PETCTDataset(root_dir=train_set_dir)
-val_set = PETCTDataset(root_dir=val_set_dir)
+#val_set = PETCTDataset(root_dir=val_set_dir)
 train_loader = DataLoader(train_set, batch_size=1, shuffle=True)
 
 
-model = Unet(2, 1, 16, 1, 0.2, False, True, leaky_negative_slope=0.1)
+model = Unet(2, 1, 16, 4, 0.2, False, True, leaky_negative_slope=0.1)
 model.eval()
 #embedder = TextEmbedder()
 #res = embedder(["Define what a tumor is "]*1)
