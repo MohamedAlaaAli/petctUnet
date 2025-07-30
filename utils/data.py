@@ -3,6 +3,7 @@ import torch
 import nibabel as nib
 from torch.utils.data import Dataset
 import numpy as np
+from pathlib import Path
 
 
 class PETCTDataset(Dataset):
@@ -31,8 +32,12 @@ class PETCTDataset(Dataset):
                     for f in os.listdir(study_path)
                     for inner_f in ([os.listdir(os.path.join(study_path, f))[0]] if os.path.isdir(os.path.join(study_path, f)) else [f])
                     if inner_f.endswith(('.nii', '.nii.gz'))
-                    ]                
-                pet_file = next((f for f in nii_files if 'pet' in f.lower()), None)
+                    ]
+                                
+                pet_file = next(
+                    (f for f in nii_files if Path(f).name.replace('.nii.gz', '').split('_')[-1].lower() == 'pet'),
+                    None
+                )
                 ct_file = next((f for f in nii_files if 'ctres' in f.lower()), None)
                 mask_file = next((f for f in nii_files if 'seg' in f.lower()), None)
 
@@ -51,6 +56,7 @@ class PETCTDataset(Dataset):
 
         pet_vol = nib.load(sample['pet_path']).get_fdata().astype(np.float32)
         ct_vol = nib.load(sample['ct_path']).get_fdata().astype(np.float32)
+        print(sample["pet_path"])
 
         # Normalize PET and CT
         pet_vol = (pet_vol - pet_vol.min()) / (np.ptp(pet_vol) + 1e-6)
