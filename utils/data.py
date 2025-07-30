@@ -35,7 +35,8 @@ class PETCTDataset(Dataset):
                     ]
                                 
                 pet_file = next(
-                    (f for f in nii_files if Path(f).name.replace('.nii.gz', '').split('_')[-1].lower() == 'pet'),
+                    (f for f in nii_files if Path(f).name.replace('.nii.gz', '').split('_')[-1].lower() == 'pet' or 
+                     Path(f).name.replace('.nii', '').split('_')[-1].lower() == 'pet'),
                     None
                 )
                 ct_file = next((f for f in nii_files if 'ctres' in f.lower()), None)

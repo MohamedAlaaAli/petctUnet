@@ -15,13 +15,13 @@ def main(args):
 
     # Model setup
     model = Unet(
-        in_channels=2,
-        out_channels=1,
-        base_filters=16,
-        num_levels=4,
-        dropout=args.dropout,
-        use_bn=False,
-        use_residual=True,
+        in_chans=2,
+        out_chans=1,
+        chans=16,
+        num_pool_layers=4,
+        drop_prob=args.dropout,
+        use_att=False,
+        use_res=True,
         leaky_negative_slope=0.1
     )
     model.eval()
