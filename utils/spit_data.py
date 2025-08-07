@@ -1,45 +1,75 @@
 import os
 import shutil
 import random
-from pathlib import Path
+from tqdm import tqdm
+import json
 
 
-def get_all_study_paths(root_dir):
-    root = Path(root_dir)
-    study_paths = []
-    for patient in root.iterdir():
-        if patient.is_dir():
-            for study in patient.iterdir():
-                if study.is_dir():
-                    study_paths.append(study)
-    return study_paths
+def split_dataset_in_place(
+    dataset_dir,
+    train_ratio=0.7,
+    val_ratio=0.15,
+    test_ratio=0.15,
+    seed=42,
+):
 
-def split_and_copy(study_paths, output_dir, train_ratio=0.8, seed=42):
     random.seed(seed)
-    random.shuffle(study_paths)
 
-    train_count = int(train_ratio * len(study_paths))
-    train_paths = study_paths[:train_count]
-    test_paths = study_paths[train_count:]
+    train_dir = os.path.join(dataset_dir, 'train')
+    val_dir = os.path.join(dataset_dir, 'val')
+    test_dir = os.path.join(dataset_dir, 'test')
 
-    for split_name, paths in [('train', train_paths), ('test', test_paths)]:
-        split_dir = Path(output_dir) / split_name
-        split_dir.mkdir(parents=True, exist_ok=True)
+    os.makedirs(train_dir, exist_ok=True)
+    os.makedirs(val_dir, exist_ok=True)
+    os.makedirs(test_dir, exist_ok=True)
 
-        for study_path in paths:
-            patient_id = study_path.parent.name
-            study_id = study_path.name
-            target_dir = split_dir / f"{patient_id}_{study_id}"
-            target_dir.mkdir(exist_ok=True)
+    all_patients = [
+        d for d in os.listdir(dataset_dir)
+        if os.path.isdir(os.path.join(dataset_dir, d)) and d not in ('train', 'val', 'test')
+    ]
 
-            for file in study_path.glob("*.nii.gz"):
-                shutil.copy(file, target_dir / file.name)
+    random.shuffle(all_patients)
 
-    print(f"✓ Split completed: {len(train_paths)} train / {len(test_paths)} test")
+    total = len(all_patients)
+    train_end = int(total * train_ratio)
+    val_end = train_end + int(total * val_ratio)
+
+    train_patients = all_patients[:train_end]
+    val_patients = all_patients[train_end:val_end]
+    test_patients = all_patients[val_end:]
+
+    def move_patients(patients, target_dir, label):
+        for patient in tqdm(patients, desc=f"Moving to {label}", unit="patient"):
+            src = os.path.join(dataset_dir, patient)
+            dst = os.path.join(target_dir, patient)
+            shutil.move(src, dst)
+
+    move_patients(train_patients, train_dir, "train")
+    move_patients(val_patients, val_dir, "val")
+    move_patients(test_patients, test_dir, "test")
+
+    print(f"✅ Split complete (in: {dataset_dir})")
+    print(f"  → Train: {len(train_patients)}")
+    print(f"  → Val:   {len(val_patients)}")
+    print(f"  → Test:  {len(test_patients)}")
+
+    manifest = {
+    "train": train_patients,
+    "val": val_patients,
+    "test": test_patients
+    }
+
+    with open(os.path.join(dataset_dir, "split_manifest.json"), "w") as f:
+        json.dump(manifest, f, indent=2)
+
 
 if __name__ == "__main__":
-    root_dir = "/path/to/original_dataset"
-    output_dir = "/path/to/output_dataset"
 
-    all_studies = get_all_study_paths(root_dir)
-    split_and_copy(all_studies, output_dir)
+    dataset_dir = "../../../../Storage/fdg_pet_ct/FDG-PET-CT-Lesions"
+    split_dataset_in_place(
+        dataset_dir=dataset_dir,
+        train_ratio=0.7,
+        val_ratio=0.15,
+        test_ratio=0.15,
+        seed=42,
+    )
