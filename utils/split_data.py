@@ -65,7 +65,7 @@ def split_dataset_in_place(
 
 if __name__ == "__main__":
 
-    dataset_dir = "../../../../Storage/fdg_pet_ct/FDG-PET-CT-Lesions"
+    dataset_dir = "../../../Storage/fdg_pet_ct/FDG-PET-CT-Lesions"
     split_dataset_in_place(
         dataset_dir=dataset_dir,
         train_ratio=0.7,
