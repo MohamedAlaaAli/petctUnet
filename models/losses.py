@@ -1,22 +1,52 @@
 import torch
 import torch.nn as nn
 
+import torch
+import torch.nn as nn
+
 class DiceLoss(nn.Module):
-    def __init__(self, smooth=0):
+    def __init__(self, smooth=1.0, apply_sigmoid=True, skip_empty=False):
         super().__init__()
         self.smooth = smooth
+        self.apply_sigmoid = apply_sigmoid
+        self.skip_empty = skip_empty
 
     def forward(self, pred, target):
-        pred = torch.sigmoid(pred)
+        """
+        Args:
+            pred: [B, 1, D, H, W] raw logits
+            target: [B, 1, D, H, W] binary masks
+        """
+        if self.apply_sigmoid:
+            pred = torch.sigmoid(pred)
 
-        # Assume shape: [B, C, D, H, W] or [B, C, H, W]
-        dims = tuple(range(2, pred.dim()))  # dims = (2, 3) for 2D, (2, 3, 4) for 3D
+        dims = tuple(range(2, pred.dim()))  # (2, 3, 4) for 3D
 
         intersection = (pred * target).sum(dim=dims)
         union = pred.sum(dim=dims) + target.sum(dim=dims)
         dice = (2. * intersection + self.smooth) / (union + self.smooth)
 
+        if self.skip_empty:
+            # Only keep samples with non-zero target
+            mask_has_fg = (target.sum(dim=dims) > 0)
+            if mask_has_fg.any():
+                dice = dice[mask_has_fg]
+            else:
+                # all empty targets; return 0 loss
+                return torch.tensor(0.0, device=pred.device, requires_grad=True)
+
         return 1 - dice.mean()
+
+class DiceBCELoss(nn.Module):
+    def __init__(self, dice_weight=0.5, bce_weight=0.5):
+        super().__init__()
+        self.dice = DiceLoss(apply_sigmoid=True, skip_empty=False)
+        self.bce = nn.BCEWithLogitsLoss()
+        self.dw = dice_weight
+        self.bw = bce_weight
+
+    def forward(self, pred, target):
+        return self.dw * self.dice(pred, target) + self.bw * self.bce(pred, target)
 
 
 class gradientLoss3d(nn.Module):
