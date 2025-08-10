@@ -135,7 +135,9 @@ class Trainer(nn.Module):
 
         with torch.no_grad():
             for i, batch in enumerate(progress_bar):
-                ct, pet, targets, _ = batch['ct'], batch['pet'], batch['seg'], batch['pth']
+                ct, pet, targets, pth = batch['ct'], batch['pet'], batch['seg'], batch['pth']
+                pth = pth +"/CTres.nii.gz"
+
                 inputs = torch.cat((ct,pet), dim=1).to(self.device)
                 targets = targets.to(self.device)
                 outputs = sliding_window_inference(
@@ -177,12 +179,13 @@ class Trainer(nn.Module):
 
                 # Save NIfTI volumes (input, label, prediction) for a few samples
                 if saved_nifti < max_nifti_to_save:
+                    affine = nib.load(pth).affine
                     label_np = targets[0, 0].cpu().numpy()
                     pred_np = get_binary_preds(outputs)[0].cpu().numpy()
 
                     base_name = f"epoch{epoch+1}_sample{i}"
-                    nib.save(nib.Nifti1Image(label_np.astype(np.uint8), affine=np.eye(4)), os.path.join(save_dir, f"{base_name}_label.nii.gz"))
-                    nib.save(nib.Nifti1Image(pred_np.astype(np.uint8), affine=np.eye(4)), os.path.join(save_dir, f"{base_name}_pred.nii.gz"))
+                    nib.save(nib.Nifti1Image(label_np.astype(np.uint8), affine=affine), os.path.join(save_dir, f"{base_name}_label.nii.gz"))
+                    nib.save(nib.Nifti1Image(pred_np.astype(np.uint8), affine=affine), os.path.join(save_dir, f"{base_name}_pred.nii.gz"))
                     saved_nifti += 1
 
         n = len(self.val_loader)
