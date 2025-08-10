@@ -172,16 +172,16 @@ def create_petct_datasets(
     train_transforms = Compose([
         LoadImaged(keys=["pet", "ct", "seg"]),
         EnsureChannelFirstd(keys=["pet", "ct", "seg"]),
-        LambdaD(keys=["pet", "ct", "seg"], func=lambda x: np.transpose(x, (0, 3, 2, 1))),
+        #LambdaD(keys=["pet", "ct", "seg"], func=lambda x: np.transpose(x, (0, 3, 2, 1))),
         NormalizeIntensityd(keys=["pet", "ct"], nonzero=True, channel_wise=True),
         RandCropByPosNegLabeld(
             keys=["pet", "ct", "seg"],
             label_key="seg",
             spatial_size=patch_size,
-            pos=1,
+            pos=3,
             neg=1,
             num_samples=num_samples,
-            image_key="pet",
+            image_key="ct",
             allow_smaller=True,
         ),
         ToTensord(keys=["pet", "ct", "seg"]),
@@ -191,7 +191,7 @@ def create_petct_datasets(
     val_transforms = Compose([
         LoadImaged(keys=["pet", "ct", "seg"]),
         EnsureChannelFirstd(keys=["pet", "ct", "seg"]),
-        LambdaD(keys=["pet", "ct", "seg"], func=lambda x: np.transpose(x, (0, 3, 2, 1))),
+        #LambdaD(keys=["pet", "ct", "seg"], func=lambda x: np.transpose(x, (0, 3, 2, 1))),
         NormalizeIntensityd(keys=["pet", "ct"], nonzero=True, channel_wise=True),
         ToTensord(keys=["pet", "ct", "seg"]),
     ])
