@@ -136,7 +136,7 @@ class Trainer(nn.Module):
         with torch.no_grad():
             for i, batch in enumerate(progress_bar):
                 ct, pet, targets, pth = batch['ct'], batch['pet'], batch['seg'], batch['pth']
-                pth = pth +"/CTres.nii.gz"
+                pth = pth[0] +"/CTres.nii.gz"
 
                 inputs = torch.cat((ct,pet), dim=1).to(self.device)
                 targets = targets.to(self.device)
@@ -250,8 +250,9 @@ def main():
                  leaky_negative_slope=0.2)
     
     trainer = Trainer(model, datadir, device="cuda")
-    trainer.save_train_sample(index=0, save_dir="train_sample")
-    #trainer.train()
+    #trainer.load_lastckpt("ckpts/best_modeltrn.pth")
+    #trainer.save_train_sample(index=0, save_dir="train_sample")
+    trainer.train()
     #trainer.validate(1)
 
 
