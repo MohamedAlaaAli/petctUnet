@@ -38,7 +38,7 @@ class DiceLoss(nn.Module):
         return 1 - dice.mean()
 
 class DiceBCELoss(nn.Module):
-    def __init__(self, dice_weight=0.5, bce_weight=0.5):
+    def __init__(self, dice_weight=0.8, bce_weight=0.2):
         super().__init__()
         self.dice = DiceLoss(apply_sigmoid=True, skip_empty=False)
         self.bce = nn.BCEWithLogitsLoss()
@@ -47,6 +47,66 @@ class DiceBCELoss(nn.Module):
 
     def forward(self, pred, target):
         return self.dw * self.dice(pred, target) + self.bw * self.bce(pred, target)
+    
+
+class FocalTverskyLoss(nn.Module):
+    def __init__(self, alpha=0.3, beta=0.7, gamma=1.5, smooth=1.0, apply_sigmoid=True, skip_empty=False):
+        """
+        alpha: weight for false positives
+        beta:  weight for false negatives (set higher than alpha to boost recall)
+        gamma: focal exponent (>1 focuses more on hard examples)
+        smooth: smoothing constant to avoid div by zero
+        """
+        super().__init__()
+        self.alpha = alpha
+        self.beta = beta
+        self.gamma = gamma
+        self.smooth = smooth
+        self.apply_sigmoid = apply_sigmoid
+        self.skip_empty = skip_empty
+
+    def forward(self, pred, target):
+        if self.apply_sigmoid:
+            pred = torch.sigmoid(pred)
+
+        dims = tuple(range(2, pred.dim()))  # for 3D: (2, 3, 4)
+
+        # True positives, false negatives, false positives
+        TP = (pred * target).sum(dim=dims)
+        FN = ((1 - pred) * target).sum(dim=dims)
+        FP = (pred * (1 - target)).sum(dim=dims)
+
+        # Tversky index
+        tversky = (TP + self.smooth) / (TP + self.alpha * FP + self.beta * FN + self.smooth)
+
+        if self.skip_empty:
+            mask_has_fg = (target.sum(dim=dims) > 0)
+            if mask_has_fg.any():
+                tversky = tversky[mask_has_fg]
+            else:
+                return torch.tensor(0.0, device=pred.device, requires_grad=True)
+
+        focal_tversky = (1 - tversky) ** self.gamma
+        return focal_tversky.mean()
+    
+
+class FocalTverskyBCELoss(nn.Module):
+    def __init__(self, ft_weight=0.8, bce_weight=0.2, alpha=0.3, beta=0.7, gamma=0.75):
+        super().__init__()
+        self.ft = FocalTverskyLoss(alpha=alpha, beta=beta, gamma=gamma, apply_sigmoid=True, skip_empty=False)
+        self.bce = nn.BCEWithLogitsLoss(reduction="mean")
+        self.fw = ft_weight
+        self.bw = bce_weight
+
+    def forward(self, pred, target):
+        # Focal Tversky part
+        focal = self.fw * self.ft(pred, target)
+
+        # BCE part (patch-wise mean)
+        bce_loss_all = self.bce(pred, target)
+        bce = self.bw * bce_loss_all.mean()
+
+        return focal + bce   
 
 
 class gradientLoss3d(nn.Module):

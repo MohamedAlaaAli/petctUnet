@@ -166,19 +166,19 @@ def create_petct_datasets(
 ):
     # -- collect samples
     train_samples = collect_study_paths(train_dir)
-    val_samples = collect_study_paths(val_dir)
+    val_samples = collect_study_paths(val_dir)[:5]
 
     # -- train transforms
     train_transforms = Compose([
         LoadImaged(keys=["pet", "ct", "seg"]),
         EnsureChannelFirstd(keys=["pet", "ct", "seg"]),
-        #LambdaD(keys=["pet", "ct", "seg"], func=lambda x: np.transpose(x, (0, 3, 2, 1))),
+        LambdaD(keys=["pet", "ct", "seg"], func=lambda x: np.transpose(x, (0, 3, 1, 2))),
         NormalizeIntensityd(keys=["pet", "ct"], nonzero=True, channel_wise=True),
         RandCropByPosNegLabeld(
             keys=["pet", "ct", "seg"],
             label_key="seg",
             spatial_size=patch_size,
-            pos=3,
+            pos=10,
             neg=1,
             num_samples=num_samples,
             image_key="ct",
@@ -191,7 +191,7 @@ def create_petct_datasets(
     val_transforms = Compose([
         LoadImaged(keys=["pet", "ct", "seg"]),
         EnsureChannelFirstd(keys=["pet", "ct", "seg"]),
-        #LambdaD(keys=["pet", "ct", "seg"], func=lambda x: np.transpose(x, (0, 3, 2, 1))),
+        LambdaD(keys=["pet", "ct", "seg"], func=lambda x: np.transpose(x, (0, 3, 1, 2))),
         NormalizeIntensityd(keys=["pet", "ct"], nonzero=True, channel_wise=True),
         ToTensord(keys=["pet", "ct", "seg"]),
     ])
@@ -208,3 +208,13 @@ def create_petct_datasets(
 
     return train_loader, val_loader
 
+# datadir = "../../../Storage/fdg_pet_ct/FDG-PET-CT-Lesions"
+# train_loader, val_loader = create_petct_datasets(datadir+"/train", datadir+"/val")
+
+# for batch in train_loader:
+#     print("Train batch shape:", batch["ct"].shape)  # Expect (B, C, D, H, W)
+#     break
+
+# for batch in val_loader:
+#     print("Val batch shape:", batch["ct"].shape)    # Expect (B, C, D, H, W)
+#     break
