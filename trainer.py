@@ -9,18 +9,12 @@ from utils.data import create_petct_datasets
 import wandb
 from tqdm import tqdm
 from utils.metrics import (
-    binary_dice,
-    binary_iou,
-    binary_accuracy,
-    binary_precision,
-    binary_recall,
-    measure_inference_time,
-    get_binary_preds,
+    dice_coefficient,
 )
 import nibabel as nib
 import numpy as np
 from monai.inferers import sliding_window_inference
-import copy
+from torch.cuda.amp import autocast, GradScaler
 
 
 class Trainer(nn.Module):
@@ -51,11 +45,14 @@ class Trainer(nn.Module):
         self.train_loader, self.val_loader = create_petct_datasets(
                                                             train_dir=os.path.join(Path(datadir), "train"),
                                                             val_dir=os.path.join(Path(datadir), "val"),
-                                                            patch_size=(2, 96, 96),
+                                                            patch_size=(96, 96, 96),
                                                             num_samples=1
                                                         )
-        self.optimizer = optim.AdamW(self.model.parameters())
+        self.optimizer = optim.AdamW(self.model.parameters(), lr=1e-4, weight_decay=1e-5, betas=(0.9, 0.999))
         self.criterion = FocalTverskyBCELoss()
+
+        # AMP GradScaler
+        self.scaler = torch.amp.GradScaler("cuda")
 
         wandb.init(project="unet_petct", name="unet-training")
         wandb.log({
@@ -81,79 +78,50 @@ class Trainer(nn.Module):
         for epoch in range(epochs):
             self.model.train()
             running_loss = 0.0
-            total_dice = 0.0
-            total_iou = 0.0
-            total_acc = 0.0
-            total_precision = 0.0
-            total_recall = 0.0
 
             progress_bar = tqdm(self.train_loader, desc=f"[Epoch {epoch+1}] Training", leave=False)
-            i=0
             for batch in progress_bar:
                 self.optimizer.zero_grad()
-                i+=1
                 ct, pet, targets, _ = batch['ct'], batch['pet'], batch['seg'], batch['pth']
+                mip_pet, mip_ct = batch["whole_pet"], batch["whole_ct"]
                 print(ct.shape)
-
+                print(mip_pet.shape)
                 inputs = torch.cat((ct,pet), dim=1).to(self.device)
                 targets = targets.to(self.device)
-                outputs = self.model(inputs)
+
+
+                with torch.amp.autocast(device_type="cuda"):
+                    outputs = self.model(inputs)
+                    loss = self.criterion(outputs, targets)
 
                 print("Pred min:", outputs.min().item(), "max:", outputs.max().item())
-
-                if targets.sum() != 0:
-                    dice = binary_dice(outputs, targets)
-                    iou = binary_iou(outputs, targets)
-                    acc = binary_accuracy(outputs, targets)
-                    precision = binary_precision(outputs, targets)
-                    recall = binary_recall(outputs, targets)
-
-                    total_dice += dice
-                    total_iou += iou
-                    total_acc += acc
-                    total_precision += precision
-                    total_recall += recall
-                    i+=1
-
-
-                loss = self.criterion(outputs, targets)
-                loss.backward()
-
-                self.optimizer.step()
+                self.scaler.scale(loss).backward()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
                 #self.update_ema()
-
                 running_loss += loss.item()
                 progress_bar.set_postfix(loss=loss.item())
+                wandb.log({"train/batchLoss":loss.item()})
 
             n= len(self.train_loader)
             avg_loss = running_loss /n
-
-
             wandb.log(
                 {
                 "epoch": epoch + 1,
-                "train/loss": avg_loss,
-                "train/dice": total_dice / (i+1),
-                "train/iou": total_iou / (i+1),
-                "train/accuracy": total_acc / (i+1),
-                "train/precision": total_precision / (i+1),
-                "train/recall": total_recall / (i+1),
+                "train/train_loss":avg_loss
+
                 }
             )
-
             print(f"[Epoch {epoch+1}] Train Loss: {avg_loss:.4f}")
             val_dice = self.validate(epoch)
             torch.save(self.model.state_dict(), "ckpts/model_ckpt.pth")
-            if epoch%4==0:
-                self.save_train_sample(index=0, save_dir="train_sample")
-
             if val_dice > best:
                 best=val_dice
                 torch.save(self.model.state_dict(), "ckpts/best_modeltrn.pth")
 
 
-
-    def validate(self, epoch, save_dir="nifti_predictions", max_nifti_to_save=2):
+    @torch.no_grad
+    def validate(self, epoch, save_dir="nifti_predictions", max_nifti_to_save=5):
         self.model.eval()
 
         total_dice = 0.0
@@ -161,10 +129,9 @@ class Trainer(nn.Module):
         total_acc = 0.0
         total_precision = 0.0
         total_recall = 0.0
-        total_inference_time = 0.0
-        saved_nifti = 0
+
         progress_bar = tqdm(self.val_loader, desc=f"[Epoch {epoch+1}] Validation", leave=False)
-        i=0
+
         with torch.no_grad():
             for batch in progress_bar:
                 ct, pet, targets, pth = batch['ct'], batch['pet'], batch['seg'], batch['pth']
@@ -182,38 +149,26 @@ class Trainer(nn.Module):
                     )
                 print(outputs.shape)
                 # Compute metrics
-                if targets.sum() != 0:
-                    i+=1
-                    dice = binary_dice(outputs, targets)
-                    iou = binary_iou(outputs, targets)
-                    acc = binary_accuracy(outputs, targets)
-                    precision = binary_precision(outputs, targets)
-                    recall = binary_recall(outputs, targets)
+                dice = dice_coefficient(outputs, targets)
 
-                    total_dice += dice
-                    total_iou += iou
-                    total_acc += acc
-                    total_precision += precision
-                    total_recall += recall
+                total_dice += dice
+                total_iou += iou
 
-                    progress_bar.set_postfix(dice=dice, iou=iou)
-                    outputs = (torch.nn.functional.sigmoid(outputs) > 0.5).float()
+                progress_bar.set_postfix(dice=dice, iou=iou)
+                outputs = (torch.nn.functional.sigmoid(outputs) > 0.5).float()
                 # Save NIfTI volumes (input, label, prediction) for a few samples
-                    if saved_nifti < max_nifti_to_save:
-                        nib.save(nib.Nifti1Image(ct.cpu().squeeze(0).squeeze(0).permute(1,2,0).numpy(), affine), "val_outs/CTres"+str(epoch)+".nii.gz")
-                        nib.save(nib.Nifti1Image(pet.cpu().squeeze(0).squeeze(0).permute(1,2,0).numpy(), affine), "val_outs/PET"+str(epoch)+".nii.gz")
-                        nib.save(nib.Nifti1Image(targets.cpu().squeeze(0).squeeze(0).permute(1,2,0).numpy(), affine), "val_outs/GT"+str(epoch)+".nii.gz")
-                        nib.save(nib.Nifti1Image(outputs.cpu().detach().squeeze(0).squeeze(0).permute(1,2,0).numpy(), affine), "val_outs/PRED"+str(epoch)+".nii.gz")
+                if max_nifti_to_save:
+                    max_nifti_to_save-=1
+                    nib.save(nib.Nifti1Image(ct.cpu().squeeze(0).squeeze(0).numpy(), affine), "val_outs/CTres"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
+                    nib.save(nib.Nifti1Image(pet.cpu().squeeze(0).squeeze(0).numpy(), affine), "val_outs/PET"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
+                    nib.save(nib.Nifti1Image(targets.cpu().squeeze(0).squeeze(0).numpy(), affine), "val_outs/GT"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
+                    nib.save(nib.Nifti1Image(outputs.cpu().detach().squeeze(0).squeeze(0).numpy(), affine), "val_outs/PRED"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
 
 
         n = len(self.val_loader)
         avg_metrics = {
-            "val/dice": total_dice / i,
-            "val/iou": total_iou / i,
-            "val/accuracy": total_acc / i,
-            "val/precision": total_precision / i,
-            "val/recall": total_recall / i,
-            "val/inference_time_per_volume": total_inference_time / i,
+            "val/dice": total_dice / n,
+            "val/iou": total_iou / n,
         }
 
         wandb.log(avg_metrics)
@@ -232,9 +187,9 @@ def main():
                  leaky_negative_slope=0)
     
     trainer = Trainer(model, datadir, device="cuda")
-    trainer.load_lastckpt("ckpts/best_modeltrn.pth")
-    #trainer.train()
-    trainer.validate(1)
+    #trainer.load_lastckpt("ckpts/best_modeltrn.pth")
+    trainer.train()
+    #trainer.validate(1)
 
 
 
