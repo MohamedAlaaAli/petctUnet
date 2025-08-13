@@ -63,9 +63,13 @@ class Trainer(nn.Module):
         })
 
     def load_lastckpt(self, pth):
-        state_dict = torch.load(pth, map_location="cuda")  
-        self.model.load_state_dict(state_dict)
-        print(f"loaded model from checkpoint: {pth}")
+        try:
+            state_dict = torch.load(pth, map_location="cuda")  
+            self.model.load_state_dict(state_dict)
+            print(f"loaded model from checkpoint: {pth}")
+        except Exception as e:
+            print(f"failed to load ckpt error msg {e}")
+            pass
 
     @torch.no_grad()
     def update_ema(self):

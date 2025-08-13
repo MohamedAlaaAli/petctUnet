@@ -205,3 +205,4 @@ wandb/
 ckpts/
 research/
 nifti_predictions/
+val_outs/
