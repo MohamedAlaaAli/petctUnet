@@ -75,7 +75,7 @@ class Unet(nn.Module):
             self.up_conv.append(ConvBlock3D(ch * 2, ch, drop_prob, self.use_res, leaky_negative_slope))
             if use_att:
                 self.up_att.append(AttentionBlock3D(ch))
-                self.cross_atts.append(CrossAttentionModule(ch, ch))
+                #self.cross_atts.append(CrossAttentionModule(ch, ch))
             ch //= 2
 
         self.out_conv = nn.Conv3d(ch * 2, self.out_chans, kernel_size=1, stride=1)
@@ -165,8 +165,8 @@ class Unet(nn.Module):
                 output = F.pad(output, [0, diff_w, 0, diff_h, 0, diff_d], mode='reflect')
 
             # --- Cross Attention ---
-            if text_embedding is not None:
-                output = self.cross_atts[idx](text_embedding, output)
+            #if text_embedding is not None:
+                #output = self.cross_atts[idx](text_embedding, output)
 
             # Concatenate with skip connection
             output = torch.cat([output, skip_connection], dim=1)
@@ -176,4 +176,39 @@ class Unet(nn.Module):
                 output = self.up_att[idx](output)
 
         return self.out_conv(output)
+
+
+
+import torch
+import torch.nn as nn
+from torchsummary import summary
+
+def model_summary(model, input_size, device="cuda"):
+    """
+    Prints summary and number of parameters for a PyTorch model.
+
+    Args:
+        model (nn.Module): The PyTorch model.
+        input_size (tuple): Shape of the input (C, H, W) or (C, D, H, W) for 3D.
+        device (str): 'cuda' or 'cpu'.
+    """
+    # Move model to device
+    model = model.to(device)
+    
+    # Model summary
+    print("="*50)
+    print("📋 Model Summary:")
+    summary(model, input_size=input_size, device=device)
+    
+    # Calculate parameters
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    print("="*50)
+    print(f"🔢 Total parameters: {total_params:,}")
+    print(f"🛠 Trainable parameters: {trainable_params:,}")
+    print(f"📦 Non-trainable parameters: {total_params - trainable_params:,}")
+    print("="*50)
+
+
 
