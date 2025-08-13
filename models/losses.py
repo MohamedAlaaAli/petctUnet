@@ -91,7 +91,7 @@ class FocalTverskyLoss(nn.Module):
     
 
 class FocalTverskyBCELoss(nn.Module):
-    def __init__(self, ft_weight=0.8, bce_weight=0.2, alpha=0.3, beta=0.7, gamma=0.75):
+    def __init__(self, ft_weight=1, bce_weight=0, alpha=0.3, beta=0.7, gamma=1):
         super().__init__()
         self.ft = FocalTverskyLoss(alpha=alpha, beta=beta, gamma=gamma, apply_sigmoid=True, skip_empty=False)
         self.bce = nn.BCEWithLogitsLoss(reduction="mean")

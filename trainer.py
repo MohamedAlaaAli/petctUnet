@@ -11,6 +11,7 @@ from tqdm import tqdm
 from utils.metrics import (
     dice_coefficient,
 )
+from torch.optim.lr_scheduler import CosineAnnealingLR
 import nibabel as nib
 import numpy as np
 from monai.inferers import sliding_window_inference
@@ -21,7 +22,7 @@ class Trainer(nn.Module):
     def __init__(self, model, 
                  datadir, 
                  device='cuda' if torch.cuda.is_available() else 'cpu', 
-                 patch_size=(96, 96, 96)):
+                 patch_size=(96, 96, 96), epochs=300):
         
         super(Trainer, self).__init__()
         self.model = model.to(device)
@@ -31,7 +32,7 @@ class Trainer(nn.Module):
         #self.ema_model = copy.deepcopy(self.model)
         self.ema_decay = 0.999  
         self.patch_size = patch_size
-
+        self.epochs = epochs
         # train_set = torch.utils.data.Subset(PETCTDataset(os.path.join(Path(datadir), "train"), patch_size=patch_size),
         #                                     [0,10,23])
         # val_set = PETCTDataset(os.path.join(Path(datadir), "val"))
@@ -50,6 +51,7 @@ class Trainer(nn.Module):
                                                         )
         self.optimizer = optim.AdamW(self.model.parameters(), lr=1e-4, weight_decay=1e-5, betas=(0.9, 0.999))
         self.criterion = FocalTverskyBCELoss()
+        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=len(self.train_loader)*self.epochs)  # T_max = total steps or epochs
 
         # AMP GradScaler
         self.scaler = torch.amp.GradScaler("cuda")
@@ -73,9 +75,9 @@ class Trainer(nn.Module):
             ema_params[name].data.mul_(self.ema_decay).add_(model_params[name].data, alpha=1 - self.ema_decay)
 
 
-    def train(self, epochs=100):
+    def train(self):
         best=0
-        for epoch in range(epochs):
+        for epoch in range(self.epochs):
             self.model.train()
             running_loss = 0.0
 
@@ -83,9 +85,7 @@ class Trainer(nn.Module):
             for batch in progress_bar:
                 self.optimizer.zero_grad()
                 ct, pet, targets, _ = batch['ct'], batch['pet'], batch['seg'], batch['pth']
-                mip_pet, mip_ct = batch["whole_pet"], batch["whole_ct"]
                 print(ct.shape)
-                print(mip_pet.shape)
                 inputs = torch.cat((ct,pet), dim=1).to(self.device)
                 targets = targets.to(self.device)
 
@@ -98,6 +98,7 @@ class Trainer(nn.Module):
                 self.scaler.scale(loss).backward()
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
+                self.scheduler.step()
                 #self.update_ema()
                 running_loss += loss.item()
                 progress_bar.set_postfix(loss=loss.item())
@@ -125,10 +126,6 @@ class Trainer(nn.Module):
         self.model.eval()
 
         total_dice = 0.0
-        total_iou = 0.0
-        total_acc = 0.0
-        total_precision = 0.0
-        total_recall = 0.0
 
         progress_bar = tqdm(self.val_loader, desc=f"[Epoch {epoch+1}] Validation", leave=False)
 
@@ -152,9 +149,8 @@ class Trainer(nn.Module):
                 dice = dice_coefficient(outputs, targets)
 
                 total_dice += dice
-                total_iou += iou
 
-                progress_bar.set_postfix(dice=dice, iou=iou)
+                progress_bar.set_postfix(dice=dice)
                 outputs = (torch.nn.functional.sigmoid(outputs) > 0.5).float()
                 # Save NIfTI volumes (input, label, prediction) for a few samples
                 if max_nifti_to_save:
@@ -168,11 +164,10 @@ class Trainer(nn.Module):
         n = len(self.val_loader)
         avg_metrics = {
             "val/dice": total_dice / n,
-            "val/iou": total_iou / n,
         }
 
         wandb.log(avg_metrics)
-        print(f"[Epoch {epoch+1}] Validation Dice: {avg_metrics['val/dice']:.4f}, IoU: {avg_metrics['val/iou']:.4f}")
+        print(f"[Epoch {epoch+1}] Validation Dice: {avg_metrics['val/dice']:.4f}")
         return total_dice
 
 
@@ -187,8 +182,9 @@ def main():
                  leaky_negative_slope=0)
     
     trainer = Trainer(model, datadir, device="cuda")
-    #trainer.load_lastckpt("ckpts/best_modeltrn.pth")
+    trainer.load_lastckpt("ckpts/best_modeltrn.pth")
     trainer.train()
+
     #trainer.validate(1)
 
 

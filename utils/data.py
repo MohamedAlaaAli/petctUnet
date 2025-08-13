@@ -122,7 +122,8 @@ from monai.transforms import (
     NormalizeIntensityd,
     Compose,
     ToTensord,
-    LambdaD
+    LambdaD,
+    ScaleIntensityRangeD
 )
 
 def collect_study_paths(root_dir):
@@ -158,7 +159,7 @@ def collect_study_paths(root_dir):
 def create_petct_datasets(
     train_dir,
     val_dir,
-    patch_size=(32, 128, 128),
+    patch_size=(128, 128, 32),
     num_samples=1,
     cache_train=False,
     cache_val=False,
@@ -172,8 +173,10 @@ def create_petct_datasets(
     train_transforms = Compose([
         LoadImaged(keys=["pet", "ct", "seg"]),
         EnsureChannelFirstd(keys=["pet", "ct", "seg"]),
-        LambdaD(keys=["pet", "ct", "seg"], func=lambda x: np.transpose(x, (0, 3, 1, 2))),
-        NormalizeIntensityd(keys=["pet", "ct"], nonzero=True, channel_wise=True),
+        NormalizeIntensityd(keys=["pet"], nonzero=True, channel_wise=True),
+        ScaleIntensityRangeD(keys=["ct"], a_min=-1024, a_max=1024,
+                         b_min=0.0, b_max=1.0, clip=True),
+
         RandCropByPosNegLabeld(
             keys=["pet", "ct", "seg"],
             label_key="seg",
@@ -181,7 +184,7 @@ def create_petct_datasets(
             pos=10,
             neg=1,
             num_samples=num_samples,
-            image_key="ct",
+            image_key="pet",
             allow_smaller=True,
         ),
         ToTensord(keys=["pet", "ct", "seg"]),
@@ -191,8 +194,9 @@ def create_petct_datasets(
     val_transforms = Compose([
         LoadImaged(keys=["pet", "ct", "seg"]),
         EnsureChannelFirstd(keys=["pet", "ct", "seg"]),
-        LambdaD(keys=["pet", "ct", "seg"], func=lambda x: np.transpose(x, (0, 3, 1, 2))),
-        NormalizeIntensityd(keys=["pet", "ct"], nonzero=True, channel_wise=True),
+        NormalizeIntensityd(keys=["pet"], nonzero=True, channel_wise=True),
+        ScaleIntensityRangeD(keys=["ct"], a_min=-1024, a_max=1024,
+                         b_min=0.0, b_max=1.0, clip=True),
         ToTensord(keys=["pet", "ct", "seg"]),
     ])
 
@@ -212,9 +216,9 @@ def create_petct_datasets(
 # train_loader, val_loader = create_petct_datasets(datadir+"/train", datadir+"/val")
 
 # for batch in train_loader:
-#     print("Train batch shape:", batch["ct"].shape)  # Expect (B, C, D, H, W)
+#     print("Train batch shape:", batch["ct"].shape) 
 #     break
 
 # for batch in val_loader:
-#     print("Val batch shape:", batch["ct"].shape)    # Expect (B, C, D, H, W)
+#     print("Val batch shape:", batch["ct"].shape)    
 #     break
