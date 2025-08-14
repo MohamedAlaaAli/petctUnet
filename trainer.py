@@ -129,7 +129,7 @@ class Trainer(nn.Module):
     def validate(self, epoch, save_dir="nifti_predictions", max_nifti_to_save=5):
         self.model.eval()
 
-        total_dice = 0.0
+        total_dice = []
 
         progress_bar = tqdm(self.val_loader, desc=f"[Epoch {epoch+1}] Validation", leave=False)
 
@@ -146,16 +146,16 @@ class Trainer(nn.Module):
                     roi_size=self.patch_size,  
                     sw_batch_size=1, 
                     predictor=self.model, 
-                    overlap=0.25
+                    overlap=0.5
                     )
                 print(outputs.shape)
                 # Compute metrics
-                dice = dice_coefficient(outputs, targets)
+                if targets.sum() > 0:
+                    dice = dice_coefficient(outputs, targets)
+                    total_dice.append(dice)
+                    progress_bar.set_postfix(dice=dice)
+                    outputs = (torch.nn.functional.sigmoid(outputs) > 0.5).float()
 
-                total_dice += dice
-
-                progress_bar.set_postfix(dice=dice)
-                outputs = (torch.nn.functional.sigmoid(outputs) > 0.5).float()
                 # Save NIfTI volumes (input, label, prediction) for a few samples
                 if max_nifti_to_save:
                     max_nifti_to_save-=1
@@ -165,9 +165,8 @@ class Trainer(nn.Module):
                     nib.save(nib.Nifti1Image(outputs.cpu().detach().squeeze(0).squeeze(0).numpy(), affine), "val_outs/PRED"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
 
 
-        n = len(self.val_loader)
         avg_metrics = {
-            "val/dice": total_dice / n,
+            "val/dice": sum(total_dice)/len(total_dice) if total_dice.__len__() != 0 else None,
         }
 
         wandb.log(avg_metrics)
@@ -189,7 +188,7 @@ def main():
     trainer.load_lastckpt("ckpts/best_modeltrn.pth")
     trainer.train()
 
-    #trainer.validate(1)
+    trainer.validate(0)
 
 
 
