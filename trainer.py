@@ -9,7 +9,7 @@ from utils.data import create_petct_datasets
 import wandb
 from tqdm import tqdm
 from utils.metrics import (
-    dice_coefficient,
+    compute_metrics
 )
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import nibabel as nib
@@ -65,7 +65,7 @@ class Trainer(nn.Module):
     def load_lastckpt(self, pth):
         try:
             state_dict = torch.load(pth, map_location="cuda")  
-            self.model.load_state_dict(state_dict)
+            self.model.load_state_dict(state_dict, strict=False)
             print(f"loaded model from checkpoint: {pth}")
         except Exception as e:
             print(f"failed to load ckpt error msg {e}")
@@ -126,10 +126,13 @@ class Trainer(nn.Module):
 
 
     @torch.no_grad
-    def validate(self, epoch, save_dir="nifti_predictions", max_nifti_to_save=5):
+    def validate(self, epoch, save_dir="nifti_predictions", max_nifti_to_save=200):
         self.model.eval()
 
         total_dice = []
+        total_precision=[]
+        total_recall = []
+        total_iou=[]
 
         progress_bar = tqdm(self.val_loader, desc=f"[Epoch {epoch+1}] Validation", leave=False)
 
@@ -149,24 +152,32 @@ class Trainer(nn.Module):
                     overlap=0.5
                     )
                 print(outputs.shape)
+                outputs = (torch.nn.functional.sigmoid(outputs) > 0.5).float()
                 # Compute metrics
                 if targets.sum() > 0:
-                    dice = dice_coefficient(outputs, targets)
-                    total_dice.append(dice)
-                    progress_bar.set_postfix(dice=dice)
-                    outputs = (torch.nn.functional.sigmoid(outputs) > 0.5).float()
+                    results = compute_metrics(outputs, targets)
+                    wandb.log({
+                        "val/batch_results": results
+                    })
+                    total_dice.append(results["dice"])
+                    total_precision.append(results["precision"])
+                    total_recall.append(results["recall"])
+                    total_iou.append(results["iou"])
 
                 # Save NIfTI volumes (input, label, prediction) for a few samples
                 if max_nifti_to_save:
                     max_nifti_to_save-=1
-                    nib.save(nib.Nifti1Image(ct.cpu().squeeze(0).squeeze(0).numpy(), affine), "val_outs/CTres"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
-                    nib.save(nib.Nifti1Image(pet.cpu().squeeze(0).squeeze(0).numpy(), affine), "val_outs/PET"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
-                    nib.save(nib.Nifti1Image(targets.cpu().squeeze(0).squeeze(0).numpy(), affine), "val_outs/GT"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
-                    nib.save(nib.Nifti1Image(outputs.cpu().detach().squeeze(0).squeeze(0).numpy(), affine), "val_outs/PRED"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
+                    nib.save(nib.Nifti1Image(ct.cpu().squeeze(0).squeeze(0).numpy(), affine), "nifti_predictions/CTres"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
+                    nib.save(nib.Nifti1Image(pet.cpu().squeeze(0).squeeze(0).numpy(), affine), "nifti_predictions/PET"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
+                    nib.save(nib.Nifti1Image(targets.cpu().squeeze(0).squeeze(0).numpy(), affine), "nifti_predictions/GT"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
+                    nib.save(nib.Nifti1Image(outputs.cpu().detach().squeeze(0).squeeze(0).numpy(), affine), "nifti_predictions/PRED"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
 
 
         avg_metrics = {
             "val/dice": sum(total_dice)/len(total_dice) if total_dice.__len__() != 0 else None,
+            "val/precision": sum(total_precision)/len(total_precision) if total_precision.__len__() != 0 else None,
+            "val/recall": sum(total_recall)/len(total_recall) if total_recall.__len__() != 0 else None,
+            "val/iou": sum(total_iou)/len(total_iou) if total_iou.__len__() != 0 else None,
         }
 
         wandb.log(avg_metrics)
@@ -185,8 +196,8 @@ def main():
                  leaky_negative_slope=0)
     
     trainer = Trainer(model, datadir, device="cuda")
-    trainer.load_lastckpt("ckpts/best_modeltrn.pth")
-    trainer.train()
+    trainer.load_lastckpt("ckpts/model_ckpt.pth")
+    #trainer.train()
 
     trainer.validate(0)
 
