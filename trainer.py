@@ -44,8 +44,8 @@ class Trainer(nn.Module):
         #     val_set, batch_size=1, shuffle=False, num_workers=4, prefetch_factor=2, persistent_workers=True, pin_memory=True
         # )
         self.train_loader, self.val_loader = create_petct_datasets(
-                                                            train_dir=os.path.join(Path(datadir), "train"),
-                                                            val_dir=os.path.join(Path(datadir), "val"),
+                                                            train_dir=os.path.join(Path(datadir), "tt"),
+                                                            val_dir=os.path.join(Path(datadir), "train"),
                                                             patch_size=(96, 96, 96),
                                                             num_samples=1
                                                         )
@@ -126,7 +126,7 @@ class Trainer(nn.Module):
 
 
     @torch.no_grad
-    def validate(self, epoch, save_dir="nifti_predictions", max_nifti_to_save=200):
+    def validate(self, epoch, save_dir="val_outs", max_nifti_to_save=200):
         self.model.eval()
 
         total_dice = []
@@ -163,14 +163,17 @@ class Trainer(nn.Module):
                     total_precision.append(results["precision"])
                     total_recall.append(results["recall"])
                     total_iou.append(results["iou"])
+                    print(results["dice"])
+                    print(pth)
 
                 # Save NIfTI volumes (input, label, prediction) for a few samples
                 if max_nifti_to_save:
                     max_nifti_to_save-=1
-                    nib.save(nib.Nifti1Image(ct.cpu().squeeze(0).squeeze(0).numpy(), affine), "nifti_predictions/CTres"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
-                    nib.save(nib.Nifti1Image(pet.cpu().squeeze(0).squeeze(0).numpy(), affine), "nifti_predictions/PET"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
-                    nib.save(nib.Nifti1Image(targets.cpu().squeeze(0).squeeze(0).numpy(), affine), "nifti_predictions/GT"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
-                    nib.save(nib.Nifti1Image(outputs.cpu().detach().squeeze(0).squeeze(0).numpy(), affine), "nifti_predictions/PRED"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
+                    print("nifti_predictions/CTres"+str(epoch)+str(max_nifti_to_save))
+                    nib.save(nib.Nifti1Image(ct.cpu().squeeze(0).squeeze(0).numpy(), affine), "val_outs/CTres"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
+                    nib.save(nib.Nifti1Image(pet.cpu().squeeze(0).squeeze(0).numpy(), affine), "val_outs/PET"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
+                    nib.save(nib.Nifti1Image(targets.cpu().squeeze(0).squeeze(0).numpy(), affine), "val_outs/GT"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
+                    nib.save(nib.Nifti1Image(outputs.cpu().detach().squeeze(0).squeeze(0).numpy(), affine), "val_outs/PRED"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
 
 
         avg_metrics = {

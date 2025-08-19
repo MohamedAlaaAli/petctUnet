@@ -64,10 +64,15 @@ class FocalTverskyLoss(nn.Module):
         self.smooth = smooth
         self.apply_sigmoid = apply_sigmoid
         self.skip_empty = skip_empty
+        #self.w_lesion = 2.0
+        #self.w_rim = 1.5
 
     def forward(self, pred, target):
         if self.apply_sigmoid:
             pred = torch.sigmoid(pred)
+        
+        #weight_map = torch.ones_like(target)
+        #weight_map[target == 1] = self.w_lesion
 
         dims = tuple(range(2, pred.dim()))  # for 3D: (2, 3, 4)
 

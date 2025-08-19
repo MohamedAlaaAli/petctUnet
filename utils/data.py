@@ -167,7 +167,7 @@ def create_petct_datasets(
 ):
     # -- collect samples
     train_samples = collect_study_paths(train_dir)
-    val_samples = collect_study_paths(val_dir)[:5]
+    val_samples = collect_study_paths(val_dir)
 
     # -- train transforms
     train_transforms = Compose([
