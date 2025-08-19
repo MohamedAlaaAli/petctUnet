@@ -206,3 +206,10 @@ ckpts/
 research/
 nifti_predictions/
 val_outs/
+fdg_metadata.csv
+organ segmentations/clin_CT_digestive_segmentation_CTres.nii.gz
+organ segmentations/clin_CT_organs_segmentation_CTres.nii.gz
+vault/v0.1/best_modeltrn.pth
+vault/v0.1/model_ckpt.pth
+vault/v0.2/best_modeltrn.pth
+vault/v0.2/model_ckpt.pth
