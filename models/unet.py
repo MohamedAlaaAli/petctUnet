@@ -2,6 +2,56 @@ from models.blocks import *
 import torch.nn as nn
 import torch.nn.functional as F
 
+# class Identity(nn.Module):
+#     def __init__(self):
+#         super().__init__()
+#     def forward(self, x):
+#         return x
+
+
+
+class PETAdapter(nn.Module):
+    """Lightweight 1x1x1 adapter to map PET (1 ch) -> C channels at a given scale."""
+    def __init__(self, out_ch):
+        super().__init__()
+        self.adapter = nn.Sequential(
+            nn.Conv3d(1, out_ch, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.InstanceNorm3d(out_ch),
+            nn.ReLU(inplace=True)
+        )
+
+    def forward(self, pet_patch, target_feat):
+        pet_resized = F.interpolate(
+            pet_patch, size=target_feat.shape[2:], mode="trilinear", align_corners=False
+        )
+
+        return self.adapter(pet_resized)
+
+# class Identity(nn.Module):
+#     def __init__(self):
+#         super().__init__()
+#     def forward(self, x):
+#         return x
+
+
+
+class PETAdapter(nn.Module):
+    """Lightweight 1x1x1 adapter to map PET (1 ch) -> C channels at a given scale."""
+    def __init__(self, out_ch):
+        super().__init__()
+        self.adapter = nn.Sequential(
+            nn.Conv3d(1, out_ch, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.InstanceNorm3d(out_ch),
+            nn.ReLU(inplace=True)
+        )
+
+    def forward(self, pet_patch, target_feat):
+        pet_resized = F.interpolate(
+            pet_patch, size=target_feat.shape[2:], mode="trilinear", align_corners=False
+        )
+
+        return self.adapter(pet_resized)
+
 class Unet(nn.Module):
     """
         Implements a 3D Unet architecture.
@@ -48,12 +98,26 @@ class Unet(nn.Module):
             ]
         )
 
+        self.adapters_pet = nn.ModuleList(
+            [
+                PETAdapter(chans)
+            ]
+        )
+
+        self.fusers = nn.ModuleList(
+            [
+                nn.Conv3d(in_chans, chans, kernel_size=1)
+            ]
+        )
+
         if use_att:
             self.down_att_layers = nn.ModuleList([AttentionBlock3D(chans)])
 
         ch = chans
-        for _ in range(num_pool_layers - 1):
+        for i in range(num_pool_layers - 1):
             self.down_sample_layers.append(ConvBlock3D(ch, ch * 2, drop_prob, self.use_res, leaky_negative_slope))
+            self.adapters_pet.append(PETAdapter(out_ch = ch*2))
+            self.fusers.append(nn.Conv3d(ch*4, ch*2, kernel_size=1, padding='same'))
             if use_att:
                 self.down_att_layers.append(AttentionBlock3D(ch * 2))
             ch *= 2
@@ -143,7 +207,13 @@ class Unet(nn.Module):
         for idx, layer in enumerate(self.down_sample_layers):
             output = layer(output)
             if self.use_att:
-                output = self.down_att_layers[idx](output)
+                pet_adapted=self.adapters_pet[idx](image[:,1:, :, :, :], output)
+                if idx > 0:
+                    print(output.shape, pet_adapted.shape)
+                    output = self.fusers[idx](torch.cat((output, pet_adapted), dim=1))
+                    output = self.down_att_layers[idx](output)
+                else:
+                    output = self.down_att_layers[idx](output)
             stack.append(output)
             output = F.avg_pool3d(output, kernel_size=2, stride=2)
 

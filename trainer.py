@@ -16,13 +16,15 @@ import nibabel as nib
 import numpy as np
 from monai.inferers import sliding_window_inference
 from torch.cuda.amp import autocast, GradScaler
+import random
+import pandas as pd
 
 
 class Trainer(nn.Module):
     def __init__(self, model, 
                  datadir, 
                  device='cuda' if torch.cuda.is_available() else 'cpu', 
-                 patch_size=(96, 96, 96), epochs=300):
+                 patch_size=(96, 96, 96), epochs=500):
         
         super(Trainer, self).__init__()
         self.model = model.to(device)
@@ -44,19 +46,19 @@ class Trainer(nn.Module):
         #     val_set, batch_size=1, shuffle=False, num_workers=4, prefetch_factor=2, persistent_workers=True, pin_memory=True
         # )
         self.train_loader, self.val_loader = create_petct_datasets(
-                                                            train_dir=os.path.join(Path(datadir), "tt"),
-                                                            val_dir=os.path.join(Path(datadir), "train"),
+                                                            train_dir=os.path.join(Path(datadir), "train"),
+                                                            val_dir=os.path.join(Path(datadir), "test"),
                                                             patch_size=(96, 96, 96),
                                                             num_samples=1
                                                         )
-        self.optimizer = optim.AdamW(self.model.parameters(), lr=1e-4, weight_decay=1e-5, betas=(0.9, 0.999))
+        self.optimizer = optim.AdamW(self.model.parameters(), lr=1e-4, weight_decay=1e-6, betas=(0.9, 0.999))
         self.criterion = FocalTverskyBCELoss()
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=len(self.train_loader)*self.epochs)  # T_max = total steps or epochs
 
         # AMP GradScaler
         self.scaler = torch.amp.GradScaler("cuda")
 
-        wandb.init(project="unet_petct", name="unet-training")
+        wandb.init(project="unet_petct", name="unet-tvreskyDialation")
         wandb.log({
             "patch_size": patch_size,
             "ema_decay": self.ema_decay
@@ -118,15 +120,26 @@ class Trainer(nn.Module):
                 }
             )
             print(f"[Epoch {epoch+1}] Train Loss: {avg_loss:.4f}")
-            val_dice = self.validate(epoch)
-            torch.save(self.model.state_dict(), "ckpts/model_ckpt.pth")
-            if val_dice > best:
-                best=val_dice
-                torch.save(self.model.state_dict(), "ckpts/best_modeltrn.pth")
+            if epoch % 20 == 0 and epoch != 0:
+                val_dice = self.validate(epoch)
+                torch.save(self.model.state_dict(), "ckpts/model_ckpt.pth")
+                if val_dice > best:
+                    best=val_dice
+                    artifact = wandb.Artifact("model_ckpt", type="model")
+                    torch.save(self.model.state_dict(), "ckpts/injectPet/best_modeltrn.pth")
+                    artifact.add_file("ckpts/best_modeltrn.pth")
+                    wandb.log_artifact(artifact)
 
 
     @torch.no_grad
-    def validate(self, epoch, save_dir="val_outs", max_nifti_to_save=200):
+    def validate(self, epoch, save_dir="val_outs", max_nifti_to_save=200, per_category=False):
+
+        if per_category:
+            df = pd.read_csv("fdg_metadata.csv")
+            melanoma=[]
+            lymph=[]
+            lung=[]
+
         self.model.eval()
 
         total_dice = []
@@ -152,7 +165,7 @@ class Trainer(nn.Module):
                     overlap=0.5
                     )
                 print(outputs.shape)
-                outputs = (torch.nn.functional.sigmoid(outputs) > 0.5).float()
+                outputs = (torch.nn.functional.sigmoid(outputs) > 0.2).float()
                 # Compute metrics
                 if targets.sum() > 0:
                     results = compute_metrics(outputs, targets)
@@ -165,15 +178,30 @@ class Trainer(nn.Module):
                     total_iou.append(results["iou"])
                     print(results["dice"])
                     print(pth)
-
+                    after_val = pth[0].split("test/")[1]
+                    print(after_val)
+                    result = df.loc[df["File Location"].str.contains(after_val), "diagnosis"]
+                    if result.empty:
+                        raise ValueError("extraction error")
+                    else:
+                        diagnosis = result.iloc[0]
+                        if diagnosis == "MELANOMA":
+                            melanoma.append(results["dice"])
+                        elif diagnosis == "LUNG_CANCER":
+                            lung.append(results["dice"])
+                        elif diagnosis == "LYMPHOMA":
+                            lymph.append(results["dice"])
+                        else:
+                            raise ValueError("extraction error")
+                    
                 # Save NIfTI volumes (input, label, prediction) for a few samples
-                if max_nifti_to_save:
+                if max_nifti_to_save and random.choice([True, False]):
                     max_nifti_to_save-=1
                     print("nifti_predictions/CTres"+str(epoch)+str(max_nifti_to_save))
-                    nib.save(nib.Nifti1Image(ct.cpu().squeeze(0).squeeze(0).numpy(), affine), "val_outs/CTres"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
-                    nib.save(nib.Nifti1Image(pet.cpu().squeeze(0).squeeze(0).numpy(), affine), "val_outs/PET"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
-                    nib.save(nib.Nifti1Image(targets.cpu().squeeze(0).squeeze(0).numpy(), affine), "val_outs/GT"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
-                    nib.save(nib.Nifti1Image(outputs.cpu().detach().squeeze(0).squeeze(0).numpy(), affine), "val_outs/PRED"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
+                    nib.save(nib.Nifti1Image(ct.cpu().squeeze(0).squeeze(0).numpy(), affine), save_dir+"/CTres"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
+                    nib.save(nib.Nifti1Image(pet.cpu().squeeze(0).squeeze(0).numpy(), affine), save_dir+"/PET"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
+                    nib.save(nib.Nifti1Image(targets.cpu().squeeze(0).squeeze(0).numpy(), affine), save_dir+"/GT"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
+                    nib.save(nib.Nifti1Image((outputs>0.5).float().cpu().detach().squeeze(0).squeeze(0).numpy(), affine), save_dir+"/PRED"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
 
 
         avg_metrics = {
@@ -181,11 +209,14 @@ class Trainer(nn.Module):
             "val/precision": sum(total_precision)/len(total_precision) if total_precision.__len__() != 0 else None,
             "val/recall": sum(total_recall)/len(total_recall) if total_recall.__len__() != 0 else None,
             "val/iou": sum(total_iou)/len(total_iou) if total_iou.__len__() != 0 else None,
+            "val/dice_mela": sum(melanoma)/len(melanoma),
+            "val/dice_lym": sum(lymph)/len(lymph),
+            "val/lung": sum(lung)/len(lung)
         }
 
         wandb.log(avg_metrics)
         print(f"[Epoch {epoch+1}] Validation Dice: {avg_metrics['val/dice']:.4f}")
-        return total_dice
+        return sum(total_dice)/len(total_dice)
 
 
 def main():
@@ -199,10 +230,9 @@ def main():
                  leaky_negative_slope=0)
     
     trainer = Trainer(model, datadir, device="cuda")
-    trainer.load_lastckpt("ckpts/model_ckpt.pth")
+    trainer.load_lastckpt("ckpts/best_modeltrnV1.pth")
     #trainer.train()
-
-    trainer.validate(0)
+    trainer.validate(0, per_category=True)
 
 
 
