@@ -213,3 +213,5 @@ vault/v0.1/best_modeltrn.pth
 vault/v0.1/model_ckpt.pth
 vault/v0.2/best_modeltrn.pth
 vault/v0.2/model_ckpt.pth
+research/01_vis.ipynb
+vault/v1/best_modeltrnV1.pth

@@ -47,7 +47,7 @@ class Trainer(nn.Module):
         # )
         self.train_loader, self.val_loader = create_petct_datasets(
                                                             train_dir=os.path.join(Path(datadir), "train"),
-                                                            val_dir=os.path.join(Path(datadir), "test"),
+                                                            val_dir=os.path.join(Path(datadir), "val"),
                                                             patch_size=(96, 96, 96),
                                                             num_samples=1
                                                         )
@@ -178,7 +178,7 @@ class Trainer(nn.Module):
                     total_iou.append(results["iou"])
                     print(results["dice"])
                     print(pth)
-                    after_val = pth[0].split("test/")[1]
+                    after_val = pth[0].split("val/")[1]
                     print(after_val)
                     result = df.loc[df["File Location"].str.contains(after_val), "diagnosis"]
                     if result.empty:
