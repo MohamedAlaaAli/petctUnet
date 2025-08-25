@@ -64,22 +64,26 @@ class FocalTverskyLoss(nn.Module):
         self.smooth = smooth
         self.apply_sigmoid = apply_sigmoid
         self.skip_empty = skip_empty
-        #self.w_lesion = 2.0
-        #self.w_rim = 1.5
+        self.w_lesion = 1.5
+        self.w_rim = 1.2
 
     def forward(self, pred, target):
         if self.apply_sigmoid:
             pred = torch.sigmoid(pred)
         
-        #weight_map = torch.ones_like(target)
-        #weight_map[target == 1] = self.w_lesion
+        weight_map = torch.ones_like(target)
+        weight_map[target == 1] = self.w_lesion
+        if self.w_rim > 1.0:
+            rim = torch.nn.functional.max_pool3d(target.float(), kernel_size=3, stride=1, padding=1) - target.float() 
+            rim = rim.clamp(min=0) 
+            weight_map[rim == 1] = self.w_rim
 
         dims = tuple(range(2, pred.dim()))  # for 3D: (2, 3, 4)
 
         # True positives, false negatives, false positives
-        TP = (pred * target).sum(dim=dims)
-        FN = ((1 - pred) * target).sum(dim=dims)
-        FP = (pred * (1 - target)).sum(dim=dims)
+        TP = (weight_map * pred * target).sum(dim=dims)
+        FN = (weight_map * (1 - pred) * target).sum(dim=dims)
+        FP = (weight_map * pred * (1 - target)).sum(dim=dims)
 
         # Tversky index
         tversky = (TP + self.smooth) / (TP + self.alpha * FP + self.beta * FN + self.smooth)
