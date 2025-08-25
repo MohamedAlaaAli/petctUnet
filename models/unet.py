@@ -8,33 +8,6 @@ import torch.nn.functional as F
 #     def forward(self, x):
 #         return x
 
-
-
-class PETAdapter(nn.Module):
-    """Lightweight 1x1x1 adapter to map PET (1 ch) -> C channels at a given scale."""
-    def __init__(self, out_ch):
-        super().__init__()
-        self.adapter = nn.Sequential(
-            nn.Conv3d(1, out_ch, kernel_size=1, stride=1, padding=0, bias=False),
-            nn.InstanceNorm3d(out_ch),
-            nn.ReLU(inplace=True)
-        )
-
-    def forward(self, pet_patch, target_feat):
-        pet_resized = F.interpolate(
-            pet_patch, size=target_feat.shape[2:], mode="trilinear", align_corners=False
-        )
-
-        return self.adapter(pet_resized)
-
-# class Identity(nn.Module):
-#     def __init__(self):
-#         super().__init__()
-#     def forward(self, x):
-#         return x
-
-
-
 class PETAdapter(nn.Module):
     """Lightweight 1x1x1 adapter to map PET (1 ch) -> C channels at a given scale."""
     def __init__(self, out_ch):

@@ -58,7 +58,7 @@ class Trainer(nn.Module):
         # AMP GradScaler
         self.scaler = torch.amp.GradScaler("cuda")
 
-        wandb.init(project="unet_petct", name="unet-tvreskyDialation")
+        wandb.init(project="unet_petct", name="unet-tvresky-petInjection")
         wandb.log({
             "patch_size": patch_size,
             "ema_decay": self.ema_decay
@@ -126,7 +126,7 @@ class Trainer(nn.Module):
                 if val_dice > best:
                     best=val_dice
                     artifact = wandb.Artifact("model_ckpt", type="model")
-                    torch.save(self.model.state_dict(), "ckpts/injectPet/best_modeltrn.pth")
+                    torch.save(self.model.state_dict(), "ckpts/injectPet/best_modeltrnv2.pth")
                     artifact.add_file("ckpts/best_modeltrn.pth")
                     wandb.log_artifact(artifact)
 
@@ -230,9 +230,9 @@ def main():
                  leaky_negative_slope=0)
     
     trainer = Trainer(model, datadir, device="cuda")
-    trainer.load_lastckpt("ckpts/best_modeltrnV1.pth")
-    #trainer.train()
-    trainer.validate(0, per_category=True)
+    trainer.load_lastckpt("ckpts/injectPet/best_modeltrn.pth")
+    trainer.train()
+    #trainer.validate(0, per_category=True)
 
 
 
