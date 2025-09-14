@@ -125,6 +125,56 @@ from monai.transforms import (
     LambdaD,
     ScaleIntensityRangeD
 )
+from scipy import ndimage
+import torch
+
+
+def get_small_tumor_weights(mask, small_threshold=100, weight_factor=1.5):
+    """
+    Generate weight map that gives higher weights to small tumors.
+    
+    Args:
+        mask: numpy array or torch tensor of shape (H, W, D) with binary mask
+        small_threshold: lesions smaller than this (in voxels) get extra weight
+        weight_factor: multiplier for small lesions (e.g., 3.0 = 3x weight)
+    
+    Returns:
+        weight_map: same shape as mask, with higher weights for small lesions
+    """
+    
+    # Convert to numpy if torch tensor
+    if isinstance(mask, torch.Tensor):
+        mask_np = mask.cpu().numpy()
+        return_torch = True
+    else:
+        mask_np = mask
+        return_torch = False
+    
+    # Initialize weight map with ones (normal weight)
+    weight_map = np.ones_like(mask_np, dtype=np.float32)
+    
+    if mask_np.sum() == 0:  # no lesions in this patch
+        if return_torch:
+            return torch.from_numpy(weight_map)
+        return weight_map
+    
+    # Label connected components (individual lesions)
+    labeled_lesions, num_lesions = ndimage.label(mask_np)
+    
+    # For each lesion, check size and apply weight
+    for lesion_id in range(1, num_lesions + 1):
+        lesion_mask = (labeled_lesions == lesion_id)
+        lesion_size = lesion_mask.sum()
+        
+        if lesion_size < small_threshold:
+            # Apply higher weight to small lesions
+            weight_map[lesion_mask] = weight_factor
+    
+    if return_torch:
+        return torch.from_numpy(weight_map)
+    
+    return weight_map
+
 
 def collect_study_paths(root_dir):
     samples = []

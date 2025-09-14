@@ -1,8 +1,11 @@
 import torch
 import torch.nn as nn
-
+import torch.nn.functional as F
 import torch
 import torch.nn as nn
+import torch
+import numpy as np
+from torch import Tensor, einsum
 
 class DiceLoss(nn.Module):
     def __init__(self, smooth=1.0, apply_sigmoid=True, skip_empty=False):
@@ -36,19 +39,7 @@ class DiceLoss(nn.Module):
                 return torch.tensor(0.0, device=pred.device, requires_grad=True)
 
         return 1 - dice.mean()
-
-class DiceBCELoss(nn.Module):
-    def __init__(self, dice_weight=0.8, bce_weight=0.2):
-        super().__init__()
-        self.dice = DiceLoss(apply_sigmoid=True, skip_empty=False)
-        self.bce = nn.BCEWithLogitsLoss()
-        self.dw = dice_weight
-        self.bw = bce_weight
-
-    def forward(self, pred, target):
-        return self.dw * self.dice(pred, target) + self.bw * self.bce(pred, target)
-    
-
+        
 class FocalTverskyLoss(nn.Module):
     def __init__(self, alpha=0.3, beta=0.7, gamma=1.5, smooth=1.0, apply_sigmoid=True, skip_empty=False):
         """
@@ -64,26 +55,32 @@ class FocalTverskyLoss(nn.Module):
         self.smooth = smooth
         self.apply_sigmoid = apply_sigmoid
         self.skip_empty = skip_empty
-        self.w_lesion = 1.5
-        self.w_rim = 1.2
+        # self.w_lesion = 1.5
+        # self.w_rim = 1.2
 
-    def forward(self, pred, target):
+    def forward(self, pred, target, w_map):
         if self.apply_sigmoid:
             pred = torch.sigmoid(pred)
         
-        weight_map = torch.ones_like(target)
-        weight_map[target == 1] = self.w_lesion
-        if self.w_rim > 1.0:
-            rim = torch.nn.functional.max_pool3d(target.float(), kernel_size=3, stride=1, padding=1) - target.float() 
-            rim = rim.clamp(min=0) 
-            weight_map[rim == 1] = self.w_rim
+        # weight_map = torch.ones_like(target)
+        # weight_map[target == 1] = self.w_lesion
+        # if self.w_rim > 1.0:
+        #     rim = torch.nn.functional.max_pool3d(target.float(), kernel_size=3, stride=1, padding=1) - target.float() 
+        #     rim = rim.clamp(min=0) 
+        #     weight_map[rim == 1] = self.w_rim
 
         dims = tuple(range(2, pred.dim()))  # for 3D: (2, 3, 4)
 
-        # True positives, false negatives, false positives
-        TP = (weight_map * pred * target).sum(dim=dims)
-        FN = (weight_map * (1 - pred) * target).sum(dim=dims)
-        FP = (weight_map * pred * (1 - target)).sum(dim=dims)
+        #True positives, false negatives, false positives
+        # TP = (weight_map * pred * target).sum(dim=dims)
+        # FN = (weight_map * (1 - pred) * target).sum(dim=dims)
+        # FP = (weight_map * pred * (1 - target)).sum(dim=dims)
+        if w_map is None:
+            w_map = torch.ones_like(pred)
+            
+        TP = (w_map * pred * target).sum(dim=dims)
+        FN = (w_map * (1 - pred) * target).sum(dim=dims)
+        FP = (w_map * pred * (1 - target)).sum(dim=dims)
 
         # Tversky index
         tversky = (TP + self.smooth) / (TP + self.alpha * FP + self.beta * FN + self.smooth)
@@ -100,16 +97,16 @@ class FocalTverskyLoss(nn.Module):
     
 
 class FocalTverskyBCELoss(nn.Module):
-    def __init__(self, ft_weight=1, bce_weight=0, alpha=0.3, beta=0.7, gamma=1):
+    def __init__(self, ft_weight=1, bce_weight=0, alpha=0.3, beta=0.7, gamma=4/3):
         super().__init__()
         self.ft = FocalTverskyLoss(alpha=alpha, beta=beta, gamma=gamma, apply_sigmoid=True, skip_empty=False)
         self.bce = nn.BCEWithLogitsLoss(reduction="mean")
         self.fw = ft_weight
         self.bw = bce_weight
 
-    def forward(self, pred, target):
+    def forward(self, pred, target, w_map=None):
         # Focal Tversky part
-        focal = self.fw * self.ft(pred, target)
+        focal = self.fw * self.ft(pred, target, w_map=w_map)
 
         # BCE part (patch-wise mean)
         bce_loss_all = self.bce(pred, target)
@@ -124,6 +121,7 @@ class gradientLoss3d(nn.Module):
         self.penalty = penalty
 
     def forward(self, input):
+        _, _ , h,w,d = input.shape
         # Compute gradients in 3 directions
         dD = torch.abs(input[:, :, 1:, :, :] - input[:, :, :-1, :, :])  # depth
         dH = torch.abs(input[:, :, :, 1:, :] - input[:, :, :, :-1, :])  # height
@@ -135,7 +133,7 @@ class gradientLoss3d(nn.Module):
             dW = dW ** 2
 
         loss = torch.sum(dD) + torch.sum(dH) + torch.sum(dW)
-        return loss
+        return loss/(h*w*d)
 
 		
 class levelsetLoss3d(nn.Module):
@@ -162,4 +160,3 @@ class levelsetLoss3d(nn.Module):
             loss += torch.sum(pLoss)
 
         return loss
-

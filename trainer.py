@@ -4,7 +4,7 @@ import os
 import torch.nn as nn
 import torch.optim as optim
 from models.unet import Unet
-from models.losses import FocalTverskyBCELoss
+from models.losses import FocalTverskyBCELoss, levelsetLoss3d, gradientLoss3d
 from utils.data import create_petct_datasets
 import wandb
 from tqdm import tqdm
@@ -18,6 +18,7 @@ from monai.inferers import sliding_window_inference
 from torch.cuda.amp import autocast, GradScaler
 import random
 import pandas as pd
+from utils.data import get_small_tumor_weights
 
 
 class Trainer(nn.Module):
@@ -35,7 +36,7 @@ class Trainer(nn.Module):
         self.ema_decay = 0.999  
         self.patch_size = patch_size
         self.epochs = epochs
-        # train_set = torch.utils.data.Subset(PETCTDataset(os.path.join(Path(datadir), "train"), patch_size=patch_size),
+        # train_set = torch.utils.data.Subset(PETCTDataset(os.path.join(Pa/th(datadir), "train"), patch_size=patch_size),
         #                                     [0,10,23])
         # val_set = PETCTDataset(os.path.join(Path(datadir), "val"))
 
@@ -48,17 +49,19 @@ class Trainer(nn.Module):
         self.train_loader, self.val_loader = create_petct_datasets(
                                                             train_dir=os.path.join(Path(datadir), "train"),
                                                             val_dir=os.path.join(Path(datadir), "val"),
-                                                            patch_size=(96, 96, 96),
+                                                            patch_size=self.patch_size,
                                                             num_samples=1
                                                         )
-        self.optimizer = optim.AdamW(self.model.parameters(), lr=1e-4, weight_decay=1e-6, betas=(0.9, 0.999))
+        self.optimizer = optim.AdamW(self.model.parameters(), lr=1e-5, weight_decay=1e-6, betas=(0.9, 0.999))
         self.criterion = FocalTverskyBCELoss()
+        #self.mumfordsah = levelsetLoss3d()
+        #self.tv = gradientLoss3d()
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=len(self.train_loader)*self.epochs)  # T_max = total steps or epochs
 
         # AMP GradScaler
         self.scaler = torch.amp.GradScaler("cuda")
 
-        wandb.init(project="unet_petct", name="unet-tvresky-petInjection")
+        wandb.init(project="unet_petct", name="unet-tvresky-rim-petInj-diceovun")
         wandb.log({
             "patch_size": patch_size,
             "ema_decay": self.ema_decay
@@ -90,15 +93,16 @@ class Trainer(nn.Module):
             progress_bar = tqdm(self.train_loader, desc=f"[Epoch {epoch+1}] Training", leave=False)
             for batch in progress_bar:
                 self.optimizer.zero_grad()
-                ct, pet, targets, _ = batch['ct'], batch['pet'], batch['seg'], batch['pth']
+                ct, pet, targets, pth = batch['ct'], batch['pet'], batch['seg'], batch['pth']
+                #w_map = get_small_tumor_weights(targets) outputs.max().item())
+                self.scaler.scale(loss).backward()
+                self.scaler.step(self.optimizer)
                 print(ct.shape)
                 inputs = torch.cat((ct,pet), dim=1).to(self.device)
                 targets = targets.to(self.device)
-
-
                 with torch.amp.autocast(device_type="cuda"):
                     outputs = self.model(inputs)
-                    loss = self.criterion(outputs, targets)
+                    loss = self.criterion(outputs, targets) 
 
                 print("Pred min:", outputs.min().item(), "max:", outputs.max().item())
                 self.scaler.scale(loss).backward()
@@ -120,19 +124,19 @@ class Trainer(nn.Module):
                 }
             )
             print(f"[Epoch {epoch+1}] Train Loss: {avg_loss:.4f}")
-            if epoch % 20 == 0 and epoch != 0:
+            if epoch % 20 == 0 :
                 val_dice = self.validate(epoch)
-                torch.save(self.model.state_dict(), "ckpts/model_ckpt.pth")
+                torch.save(self.model.state_dict(), "ckpts/diceovun.pth")
                 if val_dice > best:
                     best=val_dice
                     artifact = wandb.Artifact("model_ckpt", type="model")
-                    torch.save(self.model.state_dict(), "ckpts/injectPet/best_modeltrnv2.pth")
+                    torch.save(self.model.state_dict(), "ckpts/injectPet/diceovun.pth") # note one is saved with rimijn but it is inj only
                     artifact.add_file("ckpts/best_modeltrn.pth")
                     wandb.log_artifact(artifact)
 
 
     @torch.no_grad
-    def validate(self, epoch, save_dir="val_outs", max_nifti_to_save=200, per_category=False):
+    def validate(self, epoch, save_dir="val_outs", max_nifti_to_save=200, per_category=True):
 
         if per_category:
             df = pd.read_csv("fdg_metadata.csv")
@@ -178,21 +182,22 @@ class Trainer(nn.Module):
                     total_iou.append(results["iou"])
                     print(results["dice"])
                     print(pth)
-                    after_val = pth[0].split("val/")[1]
-                    print(after_val)
-                    result = df.loc[df["File Location"].str.contains(after_val), "diagnosis"]
-                    if result.empty:
-                        raise ValueError("extraction error")
-                    else:
-                        diagnosis = result.iloc[0]
-                        if diagnosis == "MELANOMA":
-                            melanoma.append(results["dice"])
-                        elif diagnosis == "LUNG_CANCER":
-                            lung.append(results["dice"])
-                        elif diagnosis == "LYMPHOMA":
-                            lymph.append(results["dice"])
-                        else:
+                    if per_category:
+                        after_val = pth[0].split("val/")[1]
+                        print(after_val)
+                        result = df.loc[df["File Location"].str.contains(after_val), "diagnosis"]
+                        if result.empty:
                             raise ValueError("extraction error")
+                        else:
+                            diagnosis = result.iloc[0]
+                            if diagnosis == "MELANOMA":
+                                melanoma.append(results["dice"])
+                            elif diagnosis == "LUNG_CANCER":
+                                lung.append(results["dice"])
+                            elif diagnosis == "LYMPHOMA":
+                                lymph.append(results["dice"])
+                            else:
+                                raise ValueError("extraction error")
                     
                 # Save NIfTI volumes (input, label, prediction) for a few samples
                 if max_nifti_to_save and random.choice([True, False]):
@@ -209,10 +214,14 @@ class Trainer(nn.Module):
             "val/precision": sum(total_precision)/len(total_precision) if total_precision.__len__() != 0 else None,
             "val/recall": sum(total_recall)/len(total_recall) if total_recall.__len__() != 0 else None,
             "val/iou": sum(total_iou)/len(total_iou) if total_iou.__len__() != 0 else None,
-            "val/dice_mela": sum(melanoma)/len(melanoma),
-            "val/dice_lym": sum(lymph)/len(lymph),
-            "val/lung": sum(lung)/len(lung)
+
         }
+
+        if per_category:
+            avg_metrics["val/dice_mela"] = sum(melanoma)/len(melanoma) if melanoma else None
+            avg_metrics["val/dice_lym"] = sum(lymph)/len(lymph) if lymph else None
+            avg_metrics["val/dice_lung"] = sum(lung)/len(lung) if lung else None
+
 
         wandb.log(avg_metrics)
         print(f"[Epoch {epoch+1}] Validation Dice: {avg_metrics['val/dice']:.4f}")
@@ -230,9 +239,9 @@ def main():
                  leaky_negative_slope=0)
     
     trainer = Trainer(model, datadir, device="cuda")
-    trainer.load_lastckpt("ckpts/injectPet/best_modeltrn.pth")
+    trainer.load_lastckpt("ckpts/injectPet/petrim.pth")
     trainer.train()
-    #trainer.validate(0, per_category=True)
+    #trainer.validate(222, per_category=True)
 
 
 
