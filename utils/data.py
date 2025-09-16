@@ -195,13 +195,14 @@ def collect_study_paths(root_dir):
                 )
             ct = next((f for f in nii_files if 'ctres' in f.lower()), None)
             seg = next((f for f in nii_files if 'seg' in f.lower()), None)
-
+            suv = next((f for f in nii_files if 'suv' in f.lower()), None)
             if pet and ct:
                 samples.append({
                     "pet": pet,
                     "ct": ct,
                     "seg": seg if seg else None,  # fallback if missing mask
-                    "pth": study_path
+                    "pth": study_path,
+                    "suv": suv
                 })
     return samples
 
@@ -242,12 +243,12 @@ def create_petct_datasets(
 
     # -- validation transforms: full volume
     val_transforms = Compose([
-        LoadImaged(keys=["pet", "ct", "seg"]),
-        EnsureChannelFirstd(keys=["pet", "ct", "seg"]),
+        LoadImaged(keys=["pet", "ct", "seg", "suv"]),
+        EnsureChannelFirstd(keys=["pet", "ct", "seg", "suv"]),
         NormalizeIntensityd(keys=["pet"], nonzero=True, channel_wise=True),
         ScaleIntensityRangeD(keys=["ct"], a_min=-1024, a_max=1024,
                          b_min=0.0, b_max=1.0, clip=True),
-        ToTensord(keys=["pet", "ct", "seg"]),
+        ToTensord(keys=["pet", "ct", "seg", "suv"]),
     ])
 
     # -- choose dataset class

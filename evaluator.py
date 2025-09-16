@@ -11,6 +11,8 @@ import wandb
 from pathlib import Path
 from scipy.ndimage import label
 import numpy as np
+from scipy.ndimage import find_objects
+
 
 class Evaluator:
     def __init__(self, model, model_dir, data_dir, device="cuda", patch_size=(128,128,128)):
@@ -27,6 +29,38 @@ class Evaluator:
         )
         self.tnr = []
         self.accumulator = []
+
+
+    def calculate_suvpeak(self, suv, mask, voxel_volume):
+        """
+        Calculate SUVpeak for a single lesion.
+        
+        Args:
+            suv: 3D NumPy array of SUV values.
+            mask: 3D binary mask (same shape as suv) of the lesion.
+            voxel_volume: volume of a single voxel in mL.
+        
+        Returns:
+            suvpeak: float, the SUVpeak value.
+        """
+        # Extract SUV values inside the lesion
+        suv_values = suv[mask > 0]
+        
+        if len(suv_values) == 0:
+            return 0.0  # No voxels in lesion
+        
+        # Number of voxels in 1 cm³
+        voxels_in_1cm3 = int(np.round(1 / voxel_volume))
+        
+        # Sort voxel values descending
+        suv_sorted = np.sort(suv_values)[::-1]
+        
+        # Take the mean of top N voxels corresponding to 1 cm³
+        top_voxels = suv_sorted[:voxels_in_1cm3]
+        suvpeak = top_voxels.mean()
+        
+        return suvpeak
+
 
     def _load_model(self, model_dir):
         try:
@@ -85,7 +119,7 @@ class Evaluator:
         detected_gt = len(set([gi for gi, _, _ in matched_lesions]))
         return detected_gt / total_gt if total_gt > 0 else None
 
-    def compute_batch_metrics(self, preds, targets, compute_metrics_fn, spacing=None, affine=None):
+    def compute_batch_metrics(self, preds, targets, compute_metrics_fn, suv,spacing=None, affine=None):
         preds_np = preds.cpu().detach().numpy().squeeze().astype(np.uint8)
         targets_np = targets.cpu().detach().numpy().squeeze().astype(np.uint8)
 
@@ -100,17 +134,92 @@ class Evaluator:
         matched_lesions = self.match_lesions(gt_lesions, pred_lesions, iou_thresh=0.1)
         detection_rate = self.compute_detection_rate_from_matches(gt_lesions, pred_lesions, matched_lesions)
 
-        voxel_volume = np.prod(spacing)
+        voxel_volume = np.prod(spacing) / 1000  # mm^3 -> mL
+        suv_threshold = 2.5  # SUV threshold for MTV
         mtv_pred, mtv_gt = 0.0, 0.0
         vsis = []
+
+        per_finding_metrics_list = []
+
+        voxels_in_1cm3 = int(np.round(1 / voxel_volume))  # For SUVpeak
+
         for gi, pj, _ in matched_lesions:
-            vol_gt = gt_lesions[gi].sum() * voxel_volume
-            vol_pred = pred_lesions[pj].sum() * voxel_volume
-            mtv_pred += vol_pred
+            suv_np = suv.cpu().numpy().squeeze()
+
+            # Extract voxel values inside lesion masks
+            suv_values_gt = suv_np[gt_lesions[gi] > 0]
+            suv_values_pred = suv_np[pred_lesions[pj] > 0]
+
+            # MTV calculation (thresholded)
+            suv_values_gt_thr = suv_values_gt[suv_values_gt > suv_threshold]
+            suv_values_pred_thr = suv_values_pred[suv_values_pred > suv_threshold]
+
+            vol_gt = suv_values_gt_thr.size * voxel_volume
+            vol_pred = suv_values_pred_thr.size * voxel_volume
             mtv_gt += vol_gt
+            mtv_pred += vol_pred
+
+            # VSI
             if vol_gt > 0:
                 vsi = 1 - abs(vol_pred - vol_gt) / (vol_pred + vol_gt)
                 vsis.append(vsi)
+
+            # SUV statistics (all lesion voxels)
+            suvmax_gt = suv_values_gt.max() if suv_values_gt.size > 0 else 0
+            suvmax_pred = suv_values_pred.max() if suv_values_pred.size > 0 else 0
+            suvmean_gt = suv_values_gt.mean() if suv_values_gt.size > 0 else 0
+            suvmean_pred = suv_values_pred.mean() if suv_values_pred.size > 0 else 0
+
+            # SUVpeak (mean of top voxels_in_1cm3 voxels)
+            suvpeak_gt = suv_values_gt.flatten()
+            suvpeak_gt = np.sort(suvpeak_gt)[-voxels_in_1cm3:].mean() if suvpeak_gt.size >= voxels_in_1cm3 else suvpeak_gt.mean()
+
+            suvpeak_pred = suv_values_pred.flatten()
+            suvpeak_pred = np.sort(suvpeak_pred)[-voxels_in_1cm3:].mean() if suvpeak_pred.size >= voxels_in_1cm3 else suvpeak_pred.mean()
+
+            # --- Lesion diameter (longest axis) ---
+            coords_gt = np.argwhere(gt_lesions[gi] > 0)
+            coords_pred = np.argwhere(pred_lesions[pj] > 0)
+            diameter_gt = max((coords_gt[:, i].max() - coords_gt[:, i].min() + 1) * spacing[i] for i in range(3)) if coords_gt.size > 0 else 0
+            diameter_pred = max((coords_pred[:, i].max() - coords_pred[:, i].min() + 1) * spacing[i] for i in range(3)) if coords_pred.size > 0 else 0
+
+            suv_std_gt = suv_values_gt.std() if suv_values_gt.size > 0 else 0
+            suv_std_pred = suv_values_pred.std() if suv_values_pred.size > 0 else 0
+
+            per_finding_metrics_list.append(
+                {
+                "val/perfinding/mtv_gt": vol_gt,
+                "val/perfinding/mtv_pred": vol_pred,
+                "val/perfinding/suvmax_gt": suvmax_gt,
+                "val/perfinding/suvmax_pred": suvmax_pred,
+                "val/perfinding/suvmean_gt": suvmean_gt,
+                "val/perfinding/suvmean_pred": suvmean_pred,
+                "val/perfinding/suvpeak_gt": suvpeak_gt,
+                "val/perfinding/suvpeak_pred": suvpeak_pred,
+                "val/perfinding/tlg_gt": suvmean_gt*vol_gt,
+                "val/perfinding/tlg_pred": suvmean_pred*vol_pred,
+                "val/perfinding/diameter_gt": diameter_gt,
+                "val/perfinding/diameter_pred": diameter_pred,
+                "val/perfinding/suv_std_gt": suv_std_gt,
+                "val/perfinding/suv_std_pred": suv_std_pred,
+
+                }
+            )
+
+        csv_path = "per_finding_metrics.csv"
+
+        # write header if file doesn't exist
+        if not os.path.exists(csv_path) and per_finding_metrics_list:
+            with open(csv_path, "w") as f:
+                f.write(",".join(per_finding_metrics_list[0].keys()) + "\n")
+
+        # append per-finding metrics
+        with open(csv_path, "a") as f:
+            for m in per_finding_metrics_list:
+                line = ",".join(str(v) for v in m.values())
+                f.write(line + "\n")
+            # add a blank line to separate batches
+            f.write("\n")
 
         metrics1 = {
                 "val/volume_vsi": np.mean(vsis) if vsis else 0.0,
@@ -165,7 +274,7 @@ class Evaluator:
 
         step = 0
         for batch in tqdm(self.val_loader, desc=f"[Epoch {epoch+1}] Validation", leave=False):
-            ct, pet, targets, pth = batch['ct'], batch['pet'], batch['seg'], batch['pth']
+            ct, pet, targets, pth, suv = batch['ct'], batch['pet'], batch['seg'], batch['pth'], batch['suv']
             ni = nib.load(pth[0]+"/CTres.nii.gz")
             affine = ni.affine
             spacing = ni.header.get_zooms()
@@ -175,7 +284,7 @@ class Evaluator:
             outputs = self.infer_batch(inputs)
             preds = self.postprocess_outputs(outputs)
 
-            results = self.compute_batch_metrics(preds, targets, compute_metrics_fn, spacing=spacing, affine=affine)
+            results = self.compute_batch_metrics(preds, targets, compute_metrics_fn, suv=suv, spacing=spacing, affine=affine)
             if results:
                 total_dice.append(results["dice"])
                 total_precision.append(results["precision"])
