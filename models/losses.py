@@ -160,3 +160,50 @@ class levelsetLoss3d(nn.Module):
             loss += torch.sum(pLoss)
 
         return loss
+    
+
+class BoundaryDoULoss3D(nn.Module):
+    def __init__(self):
+        super(BoundaryDoULoss3D, self).__init__()
+
+        # 3D cross kernel (6-neighbourhood)
+        kernel = torch.zeros((3, 3, 3))
+        kernel[1, 1, :] = 1
+        kernel[1, :, 1] = 1
+        kernel[:, 1, 1] = 1
+        self.register_buffer("kernel3d", kernel.unsqueeze(0).unsqueeze(0), persistent=False)  # (1,1,3,3,3)
+
+    def _adaptive_size(self, score, target):
+        smooth = 1e-5
+
+        with torch.autocast(device_type="cuda", enabled=False):
+            Y = F.conv3d(target, self.kernel3d.to("cuda"), padding=1)
+
+        Y = Y * target
+        Y[Y == 7] = 0  # remove full-neighbour voxels
+
+        C = torch.count_nonzero(Y)
+        S = torch.count_nonzero(target)
+
+        alpha = 1 - (C + smooth) / (S + smooth)
+        alpha = 2 * alpha - 1
+        alpha = torch.clamp(alpha, max=0.8)
+
+        intersect = torch.sum(score * target)
+        y_sum = torch.sum(target * target)
+        z_sum = torch.sum(score * score)
+
+        loss = (z_sum + y_sum - 2 * intersect + smooth) / \
+               (z_sum + y_sum - (1 + alpha) * intersect + smooth)
+
+        return loss
+
+    def forward(self, inputs, target):
+        """
+        inputs: (B,1,W,H,D) logits
+        target: (B,1,W,H,D) binary ground truth {0,1}
+        """
+        # apply sigmoid inside AMP context
+        inputs = torch.sigmoid(inputs)
+
+        return self._adaptive_size(inputs, target)

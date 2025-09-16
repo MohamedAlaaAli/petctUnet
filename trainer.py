@@ -4,7 +4,7 @@ import os
 import torch.nn as nn
 import torch.optim as optim
 from models.unet import Unet
-from models.losses import FocalTverskyBCELoss, levelsetLoss3d, gradientLoss3d
+from models.losses import FocalTverskyBCELoss, levelsetLoss3d, gradientLoss3d, BoundaryDoULoss3D
 from utils.data import create_petct_datasets
 import wandb
 from tqdm import tqdm
@@ -25,7 +25,7 @@ class Trainer(nn.Module):
     def __init__(self, model, 
                  datadir, 
                  device='cuda' if torch.cuda.is_available() else 'cpu', 
-                 patch_size=(96, 96, 96), epochs=500):
+                 patch_size=(96, 96, 96), epochs=1000):
         
         super(Trainer, self).__init__()
         self.model = model.to(device)
@@ -54,6 +54,7 @@ class Trainer(nn.Module):
                                                         )
         self.optimizer = optim.AdamW(self.model.parameters(), lr=1e-5, weight_decay=1e-6, betas=(0.9, 0.999))
         self.criterion = FocalTverskyBCELoss()
+        self.dou = BoundaryDoULoss3D()
         #self.mumfordsah = levelsetLoss3d()
         #self.tv = gradientLoss3d()
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=len(self.train_loader)*self.epochs)  # T_max = total steps or epochs
@@ -95,14 +96,13 @@ class Trainer(nn.Module):
                 self.optimizer.zero_grad()
                 ct, pet, targets, pth = batch['ct'], batch['pet'], batch['seg'], batch['pth']
                 #w_map = get_small_tumor_weights(targets) outputs.max().item())
-                self.scaler.scale(loss).backward()
-                self.scaler.step(self.optimizer)
                 print(ct.shape)
                 inputs = torch.cat((ct,pet), dim=1).to(self.device)
                 targets = targets.to(self.device)
                 with torch.amp.autocast(device_type="cuda"):
                     outputs = self.model(inputs)
-                    loss = self.criterion(outputs, targets) 
+                    loss = self.criterion(outputs, targets) + self.dou(outputs, targets)
+                    loss/=2
 
                 print("Pred min:", outputs.min().item(), "max:", outputs.max().item())
                 self.scaler.scale(loss).backward()
@@ -239,7 +239,7 @@ def main():
                  leaky_negative_slope=0)
     
     trainer = Trainer(model, datadir, device="cuda")
-    trainer.load_lastckpt("ckpts/injectPet/petrim.pth")
+    #trainer.load_lastckpt("ckpts/injectPet/petrim.pth")
     trainer.train()
     #trainer.validate(222, per_category=True)
 
