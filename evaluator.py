@@ -12,6 +12,110 @@ from pathlib import Path
 from scipy.ndimage import label
 import numpy as np
 from scipy.ndimage import find_objects
+import shutil
+import time
+from moosez import moose
+import nibabel as nib
+import csv
+from scipy.ndimage import binary_erosion
+
+
+# Mapping of Moose labels to organ names
+MULTILABEL_MAP = {
+    "clin_ct_organs": {
+        1: "adrenal_gland_left",
+        2: "adrenal_gland_right",
+        3: "bladder",
+        4: "brain",
+        5: "gallbladder",
+        6: "kidney_left",
+        7: "kidney_right",
+        8: "liver",
+        9: "lung_lower_lobe_left",
+        10: "lung_lower_lobe_right",
+        11: "lung_middle_lobe_right",
+        12: "lung_upper_lobe_left",
+        13: "lung_upper_lobe_right",
+        14: "pancreas",
+        15: "spleen",
+        16: "stomach",
+        17: "thyroid_left",
+        18: "thyroid_right",
+        19: "trachea"
+    },
+    "clin_ct_digestive": {
+        1: "colon",
+        2: "duodenum",
+        3: "esophagus",
+        4: "small_bowel"
+    }
+}
+
+def calculate_tumor_organ_overlap_multilabel(organ_dir: str, tumor_masks: list, csv_path="tumor_organ_overlap_boundary.csv"):
+    """
+    organ_dir: path containing NIfTI organ masks (multi-label)
+    tumor_masks: list of 3D numpy arrays (binary tumor masks)
+    csv_path: output CSV path
+    """
+    # Load all organ NIfTIs
+    organ_volumes = {}  # {organ_name: 3D binary mask of boundary}
+    nii_pths = [os.path.join(organ_dir, p) for p in os.listdir(organ_dir)]
+    
+    for path in nii_pths:
+        if "organs" in path:
+            name = "clin_ct_organs"
+        else:
+            name = "clin_ct_digestive"
+
+        nii = nib.load(path)
+        data = nii.get_fdata()
+
+        for label_val, organ_name in MULTILABEL_MAP[name].items():
+            mask = (data == label_val)
+            # Extract boundary
+            boundary = mask ^ binary_erosion(mask)
+            organ_volumes[organ_name] = boundary
+
+    # Prepare CSV
+    first_time = not os.path.exists(csv_path)
+    with open(csv_path, "a", newline="") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=["tumor_id"] + list(organ_volumes.keys()))
+        if first_time:
+            writer.writeheader()
+
+        # Compute overlaps
+        for idx, tumor_mask in enumerate(tumor_masks):
+            tumor_voxels = tumor_mask.sum()
+            overlap_dict = {"tumor_id": idx}
+
+            for organ_name, organ_boundary in organ_volumes.items():
+                intersection = np.logical_and(tumor_mask, organ_boundary).sum()
+                percent_overlap = (intersection / tumor_voxels) * 100
+                overlap_dict[organ_name] = percent_overlap
+
+            writer.writerow(overlap_dict)
+
+
+
+def run_moose(ct_path: str, output_dir: str, tasks=None, device="cuda"):
+    """
+    Run Moose organ segmentation on a CT NIfTI file.
+
+    Args:
+        ct_path (str): Path to the input CT NIfTI file.
+        output_dir (str): Directory where the segmentation outputs will be saved.
+        tasks (list, optional): List of Moose tasks. Defaults to ['clin_ct_organs', 'clin_ct_digestive'].
+        device (str, optional): 'cuda' or 'cpu'. Defaults to 'cuda'.
+    """
+    if tasks is None:
+        tasks = ['clin_ct_organs', 'clin_ct_digestive']
+
+    os.makedirs(output_dir, exist_ok=True)
+    
+    start_time = time.time()
+    moose(ct_path, tasks, output_dir, device)
+    elapsed = time.time() - start_time
+    print(f"✓ Moose completed for tasks {tasks} in {elapsed:.2f} seconds. Outputs saved to {output_dir}")
 
 
 class Evaluator:
@@ -119,7 +223,7 @@ class Evaluator:
         detected_gt = len(set([gi for gi, _, _ in matched_lesions]))
         return detected_gt / total_gt if total_gt > 0 else None
 
-    def compute_batch_metrics(self, preds, targets, compute_metrics_fn, suv,spacing=None, affine=None):
+    def compute_batch_metrics(self, preds, targets, compute_metrics_fn, suv, ct_pth, spacing=None, affine=None):
         preds_np = preds.cpu().detach().numpy().squeeze().astype(np.uint8)
         targets_np = targets.cpu().detach().numpy().squeeze().astype(np.uint8)
 
@@ -133,6 +237,17 @@ class Evaluator:
         pred_lesions = self.get_components(preds_np)
         matched_lesions = self.match_lesions(gt_lesions, pred_lesions, iou_thresh=0.1)
         detection_rate = self.compute_detection_rate_from_matches(gt_lesions, pred_lesions, matched_lesions)
+
+        run_moose(ct_path=ct_pth, output_dir="seg_dir")
+
+        pj_indices = [pj for _, pj, _ in matched_lesions]
+        matched_pred_lesions = [pred_lesions[pj] for pj in pj_indices]
+        calculate_tumor_organ_overlap_multilabel("seg_dir", matched_pred_lesions, "tumor_organ_overlaps_pred.csv")
+        
+        gi_indices = [gi for gi, _, _ in matched_lesions]
+        matched_gt_lesions = [gt_lesions[gi] for gi in gi_indices]
+        calculate_tumor_organ_overlap_multilabel("seg_dir", matched_gt_lesions, "tumor_organ_overlaps_gt.csv")
+        shutil.rmtree("seg_dir")          # delete folder and everything inside
 
         voxel_volume = np.prod(spacing) / 1000  # mm^3 -> mL
         suv_threshold = 2.5  # SUV threshold for MTV
@@ -206,7 +321,7 @@ class Evaluator:
                 }
             )
 
-        csv_path = "per_finding_metrics.csv"
+        csv_path = "per_finding_metrics_1.csv"
 
         # write header if file doesn't exist
         if not os.path.exists(csv_path) and per_finding_metrics_list:
@@ -271,6 +386,7 @@ class Evaluator:
             melanoma, lymph, lung = [], [], []
 
         total_dice, total_precision, total_recall, total_iou = [], [], [], []
+        det_rate = []
 
         step = 0
         for batch in tqdm(self.val_loader, desc=f"[Epoch {epoch+1}] Validation", leave=False):
@@ -284,12 +400,13 @@ class Evaluator:
             outputs = self.infer_batch(inputs)
             preds = self.postprocess_outputs(outputs)
 
-            results = self.compute_batch_metrics(preds, targets, compute_metrics_fn, suv=suv, spacing=spacing, affine=affine)
+            results = self.compute_batch_metrics(preds, targets, compute_metrics_fn, suv=suv,ct_pth=pth[0]+"/CTres.nii.gz", spacing=spacing, affine=affine)
             if results:
                 total_dice.append(results["dice"])
                 total_precision.append(results["precision"])
                 total_recall.append(results["recall"])
                 total_iou.append(results["iou"])
+                det_rate.append(results["val/detection_rate"])
 
                 if per_category:
                     self.categorize_metrics(results, pth, df, melanoma, lung, lymph)
@@ -311,6 +428,7 @@ class Evaluator:
             "val/precision": np.mean(total_precision) if total_precision else None,
             "val/recall": np.mean(total_recall) if total_recall else None,
             "val/iou": np.mean(total_iou) if total_iou else None,
+            "val/mean_detection_rate": np.mean(det_rate) if det_rate else None
         }
         if per_category:
             avg_metrics.update({
