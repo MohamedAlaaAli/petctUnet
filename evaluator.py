@@ -1,4 +1,5 @@
 import os, random
+import subprocess
 import torch
 import nibabel as nib
 import pandas as pd
@@ -18,6 +19,48 @@ from moosez import moose
 import nibabel as nib
 import csv
 from scipy.ndimage import binary_erosion
+
+
+def calculate_tumor_organ_overlap_totalseg(organ_dir: str, tumor_masks: list, csv_path="tumor_organ_overlap_boundary_totalseg.csv"):
+    """
+    organ_dir: path containing TotalSegmentator NIfTI outputs (one file per organ)
+    tumor_masks: list of 3D numpy arrays (binary tumor masks)
+    csv_path: output CSV path
+    """
+    # Step 1: collect all organs from files
+    nii_files = [f for f in os.listdir(organ_dir) if f.endswith(".nii") or f.endswith(".nii.gz")]
+    organ_names = [os.path.splitext(f)[0].replace(".nii", "") for f in nii_files]
+
+    # Step 2: load all boundaries once
+    organ_volumes = {}
+    for f, organ_name in zip(nii_files, organ_names):
+        nii = nib.load(os.path.join(organ_dir, f))
+        data = nii.get_fdata().astype(bool)
+        boundary = data ^ binary_erosion(data)  # boundary mask
+        organ_volumes[organ_name] = boundary
+
+    # Step 3: write CSV with all organ columns
+    fieldnames = ["tumor_id"] + organ_names
+    first_time = not os.path.exists(csv_path)
+    with open(csv_path, "a", newline="") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        if first_time:
+            writer.writeheader()
+
+        # Step 4: compute overlaps per tumor
+        for idx, tumor_mask in enumerate(tumor_masks):
+            tumor_voxels = tumor_mask.sum()
+            overlap_dict = {"tumor_id": idx}
+
+            for organ_name in organ_names:
+                organ_boundary = organ_volumes[organ_name]
+                intersection = np.logical_and(tumor_mask, organ_boundary).sum()
+                percent_overlap = (intersection / tumor_voxels) * 100 if tumor_voxels > 0 else 0.0
+                overlap_dict[organ_name] = percent_overlap
+
+            writer.writerow(overlap_dict)
+
+
 
 
 # Mapping of Moose labels to organ names
@@ -50,6 +93,23 @@ MULTILABEL_MAP = {
         4: "small_bowel"
     }
 }
+
+def run_totalsegmentator(ct_path: str, output_dir: str = "totalseg_output"):
+    os.makedirs(output_dir, exist_ok=True)
+
+    tasks = ["total", "body"]
+    os.makedirs(output_dir, exist_ok=True)
+
+    for task in tasks:
+        cmd = [
+            "TotalSegmentator",
+            "-i", ct_path,
+            "-o", output_dir,
+            "--task", task
+        ]
+        print(f"Running: {' '.join(cmd)}")
+        subprocess.run(cmd, check=True)
+
 
 def calculate_tumor_organ_overlap_multilabel(organ_dir: str, tumor_masks: list, csv_path="tumor_organ_overlap_boundary.csv"):
     """
@@ -238,16 +298,16 @@ class Evaluator:
         matched_lesions = self.match_lesions(gt_lesions, pred_lesions, iou_thresh=0.1)
         detection_rate = self.compute_detection_rate_from_matches(gt_lesions, pred_lesions, matched_lesions)
 
-        run_moose(ct_path=ct_pth, output_dir="seg_dir")
-
+        #run_moose(ct_path=ct_pth, output_dir="seg_dir")
+        run_totalsegmentator(ct_path=ct_pth)
         pj_indices = [pj for _, pj, _ in matched_lesions]
         matched_pred_lesions = [pred_lesions[pj] for pj in pj_indices]
-        calculate_tumor_organ_overlap_multilabel("seg_dir", matched_pred_lesions, "tumor_organ_overlaps_pred.csv")
+        calculate_tumor_organ_overlap_totalseg("totalseg_output", matched_pred_lesions, "tumor_organ_overlaps_predts.csv")
         
         gi_indices = [gi for gi, _, _ in matched_lesions]
         matched_gt_lesions = [gt_lesions[gi] for gi in gi_indices]
-        calculate_tumor_organ_overlap_multilabel("seg_dir", matched_gt_lesions, "tumor_organ_overlaps_gt.csv")
-        shutil.rmtree("seg_dir")          # delete folder and everything inside
+        calculate_tumor_organ_overlap_totalseg("totalseg_output", matched_gt_lesions, "tumor_organ_overlaps_gtts.csv")
+        shutil.rmtree("totalseg_output")          # delete folder and everything inside
 
         voxel_volume = np.prod(spacing) / 1000  # mm^3 -> mL
         suv_threshold = 2.5  # SUV threshold for MTV
@@ -321,7 +381,7 @@ class Evaluator:
                 }
             )
 
-        csv_path = "per_finding_metrics_1.csv"
+        csv_path = "per_finding_metrics_2.csv"
 
         # write header if file doesn't exist
         if not os.path.exists(csv_path) and per_finding_metrics_list:

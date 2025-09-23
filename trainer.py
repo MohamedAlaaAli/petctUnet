@@ -90,7 +90,6 @@ class Trainer(nn.Module):
         for epoch in range(self.epochs):
             self.model.train()
             running_loss = 0.0
-
             progress_bar = tqdm(self.train_loader, desc=f"[Epoch {epoch+1}] Training", leave=False)
             for batch in progress_bar:
                 self.optimizer.zero_grad()
@@ -102,7 +101,6 @@ class Trainer(nn.Module):
                 with torch.amp.autocast(device_type="cuda"):
                     outputs = self.model(inputs)
                     loss = self.criterion(outputs, targets) + self.dou(outputs, targets)
-                    loss/=2
 
                 print("Pred min:", outputs.min().item(), "max:", outputs.max().item())
                 self.scaler.scale(loss).backward()
@@ -126,11 +124,11 @@ class Trainer(nn.Module):
             print(f"[Epoch {epoch+1}] Train Loss: {avg_loss:.4f}")
             if epoch % 20 == 0 :
                 val_dice = self.validate(epoch)
-                torch.save(self.model.state_dict(), "ckpts/diceovun.pth")
+                torch.save(self.model.state_dict(), "ckpts/diceovunNW.pth")
                 if val_dice > best:
                     best=val_dice
                     artifact = wandb.Artifact("model_ckpt", type="model")
-                    torch.save(self.model.state_dict(), "ckpts/injectPet/diceovun.pth") # note one is saved with rimijn but it is inj only
+                    torch.save(self.model.state_dict(), "ckpts/injectPet/diceovunNW.pth") # note one is saved with rimijn but it is inj only
                     artifact.add_file("ckpts/best_modeltrn.pth")
                     wandb.log_artifact(artifact)
 
@@ -239,8 +237,8 @@ def main():
                  leaky_negative_slope=0)
     
     trainer = Trainer(model, datadir, device="cuda")
-    #trainer.load_lastckpt("ckpts/injectPet/petrim.pth")
-    trainer.train()
+    #trainer.load_lastckpt("ckpts/injectPet/diceovun.pth")
+    #trainer.train()
     #trainer.validate(222, per_category=True)
 
 
