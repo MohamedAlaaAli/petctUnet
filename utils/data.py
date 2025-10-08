@@ -207,6 +207,33 @@ def collect_study_paths(root_dir):
     return samples
 
 
+from monai.transforms import MapTransform, RandCropByPosNegLabeld
+import random
+
+patch_sizes = [(64, 64, 64), (96, 96, 96), (32, 32, 32)]
+
+class RandomPatchCropd(MapTransform):
+    def __init__(self, keys, label_key, pos=1, neg=1, num_samples=1):
+        super().__init__(keys)
+        self.label_key = label_key
+        self.pos = pos
+        self.neg = neg
+        self.num_samples = num_samples
+
+    def __call__(self, data):
+        d = dict(data)
+        spatial_size = random.choice(patch_sizes)  # pick patch size
+        cropper = RandCropByPosNegLabeld(
+            keys=self.keys,
+            label_key=self.label_key,
+            spatial_size=spatial_size,
+            pos=self.pos,
+            neg=self.neg,
+            num_samples=self.num_samples
+        )
+        d = cropper(d)
+        return d
+
 def create_petct_datasets(
     train_dir,
     val_dir,
@@ -228,16 +255,17 @@ def create_petct_datasets(
         ScaleIntensityRangeD(keys=["ct"], a_min=-1024, a_max=1024,
                          b_min=0.0, b_max=1.0, clip=True),
 
-        RandCropByPosNegLabeld(
-            keys=["pet", "ct", "seg"],
-            label_key="seg",
-            spatial_size=patch_size,
-            pos=10,
-            neg=1,
-            num_samples=num_samples,
-            image_key="pet",
-            allow_smaller=True,
-        ),
+        # RandCropByPosNegLabeld(
+        #     keys=["pet", "ct", "seg"],
+        #     label_key="seg",
+        #     spatial_size=lambda: random_patch_size(),  # choose random size            
+        #     pos=10,
+        #     neg=1,
+        #     num_samples=num_samples,
+        #     image_key="pet",
+        #     allow_smaller=True,
+        # ),
+        RandomPatchCropd(keys=["pet", "ct", "seg"], label_key="seg", pos=10, neg=1, num_samples=num_samples),
         ToTensord(keys=["pet", "ct", "seg"]),
     ])
 

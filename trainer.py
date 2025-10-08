@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 from models.unet import Unet
 from models.losses import FocalTverskyBCELoss, levelsetLoss3d, gradientLoss3d, BoundaryDoULoss3D
-from utils.data import create_petct_datasets
+from utils.data import create_petct_datasets ,get_small_tumor_weights
 import wandb
 from tqdm import tqdm
 from utils.metrics import (
@@ -25,7 +25,7 @@ class Trainer(nn.Module):
     def __init__(self, model, 
                  datadir, 
                  device='cuda' if torch.cuda.is_available() else 'cpu', 
-                 patch_size=(96, 96, 96), epochs=1000):
+                 patch_size=(128, 128, 128), epochs=1000):
         
         super(Trainer, self).__init__()
         self.model = model.to(device)
@@ -62,7 +62,7 @@ class Trainer(nn.Module):
         # AMP GradScaler
         self.scaler = torch.amp.GradScaler("cuda")
 
-        wandb.init(project="unet_petct", name="unet-tvresky-rim-petInj-diceovun")
+        wandb.init(project="unet_petct", name="dovun_multiSCLE")
         wandb.log({
             "patch_size": patch_size,
             "ema_decay": self.ema_decay
@@ -100,6 +100,7 @@ class Trainer(nn.Module):
                 targets = targets.to(self.device)
                 with torch.amp.autocast(device_type="cuda"):
                     outputs = self.model(inputs)
+                    #wmap = get_small_tumor_weights(targets).to("cuda")
                     loss = self.criterion(outputs, targets) + self.dou(outputs, targets)
 
                 print("Pred min:", outputs.min().item(), "max:", outputs.max().item())
@@ -124,17 +125,17 @@ class Trainer(nn.Module):
             print(f"[Epoch {epoch+1}] Train Loss: {avg_loss:.4f}")
             if epoch % 20 == 0 :
                 val_dice = self.validate(epoch)
-                torch.save(self.model.state_dict(), "ckpts/diceovunNW.pth")
+                torch.save(self.model.state_dict(), "ckpts/dovun_multiSCLE.pth")
                 if val_dice > best:
                     best=val_dice
                     artifact = wandb.Artifact("model_ckpt", type="model")
-                    torch.save(self.model.state_dict(), "ckpts/injectPet/diceovunNW.pth") # note one is saved with rimijn but it is inj only
+                    torch.save(self.model.state_dict(), "ckpts/injectPet/dovun_multiSCLE.pth") # note one is saved with rimijn but it is inj only
                     artifact.add_file("ckpts/best_modeltrn.pth")
                     wandb.log_artifact(artifact)
 
 
     @torch.no_grad
-    def validate(self, epoch, save_dir="val_outs", max_nifti_to_save=200, per_category=True):
+    def validate(self, epoch, save_dir="val_v", max_nifti_to_save=100, per_category=True):
 
         if per_category:
             df = pd.read_csv("fdg_metadata.csv")
@@ -164,7 +165,7 @@ class Trainer(nn.Module):
                     roi_size=self.patch_size,  
                     sw_batch_size=1, 
                     predictor=self.model, 
-                    overlap=0.5
+                    overlap=0.75
                     )
                 print(outputs.shape)
                 outputs = (torch.nn.functional.sigmoid(outputs) > 0.2).float()
@@ -198,7 +199,7 @@ class Trainer(nn.Module):
                                 raise ValueError("extraction error")
                     
                 # Save NIfTI volumes (input, label, prediction) for a few samples
-                if max_nifti_to_save and random.choice([True, False]):
+                if max_nifti_to_save and random.choice([True, True]):
                     max_nifti_to_save-=1
                     print("nifti_predictions/CTres"+str(epoch)+str(max_nifti_to_save))
                     nib.save(nib.Nifti1Image(ct.cpu().squeeze(0).squeeze(0).numpy(), affine), save_dir+"/CTres"+str(epoch)+str(max_nifti_to_save)+".nii.gz")
@@ -235,11 +236,11 @@ def main():
                  use_att=True, 
                  use_res=True, 
                  leaky_negative_slope=0)
-    
+    print("im here")
     trainer = Trainer(model, datadir, device="cuda")
-    #trainer.load_lastckpt("ckpts/injectPet/diceovun.pth")
+    trainer.load_lastckpt("ckpts/injectPet/diceovun1.pth")
     #trainer.train()
-    #trainer.validate(222, per_category=True)
+    trainer.validate(0, per_category=True)
 
 
 
